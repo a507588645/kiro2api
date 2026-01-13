@@ -449,7 +449,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 						}
 					}
 
-n				// 修复: 验证历史工具结果，移除不存在的工具引用
+					// 修复: 验证历史工具结果，移除不存在的工具引用
 				// 参考: kiro.rs 2026.1.2 - 修复因历史中的工具不存在导致的400报错
 				if len(allToolResults) > 0 {
 					allToolResults = validateHistoricalToolResults(allToolResults, anthropicReq.Tools)
