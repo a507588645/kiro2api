@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+CLAUDE.md
+*.md
+
+# IDE
+.vscode
+.idea
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Test files
+*_test.go
+test/
+coverage.out
+
+# Build artifacts (if any local builds exist)
+kiro2api
+*.exe
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Dependencies (will be downloaded during build)
+vendor/

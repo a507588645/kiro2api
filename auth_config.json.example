@@ -1,0 +1,19 @@
+[
+  {
+    "auth": "Social",
+    "refreshToken": "your_social_refresh_token_here",
+    "disabled": false
+  },
+  {
+    "auth": "Social",
+    "refreshToken": "your_second_social_refresh_token_here",
+    "disabled": false
+  },
+  {
+    "auth": "IdC",
+    "refreshToken": "your_idc_refresh_token_here",
+    "clientId": "your_idc_client_id",
+    "clientSecret": "your_idc_client_secret",
+    "disabled": false
+  }
+]
