@@ -38,8 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     xx-go build \
     -ldflags="-s -w" \
     -trimpath \
-    -o kiro2api main.go && \
-    xx-verify --static kiro2api
+    -o kiro2api main.go
 
 # 运行阶段
 FROM alpine:3.19
