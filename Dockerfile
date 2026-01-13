@@ -6,7 +6,7 @@
 # syntax=docker/dockerfile:1.4
 
 # 构建阶段 - 使用 BUILDPLATFORM 在原生架构执行
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 # 安装交叉编译工具链
 # tonistiigi/xx 提供跨架构编译辅助工具
