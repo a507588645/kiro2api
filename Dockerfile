@@ -6,7 +6,7 @@
 # syntax=docker/dockerfile:1.4
 
 # 构建阶段 - 使用 BUILDPLATFORM 在原生架构执行
-FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
 
 # 安装交叉编译工具链
 # tonistiigi/xx 提供跨架构编译辅助工具
@@ -18,13 +18,13 @@ WORKDIR /app
 
 # 配置目标平台的交叉编译工具链
 ARG TARGETPLATFORM
-RUN xx-apk add musl-dev gcc
+RUN xx-apk add musl-dev gcc g++
 
 # 复制 go mod 文件
 COPY go.mod go.sum ./
 
 # 下载依赖（在原生平台执行，速度快）
-RUN --mount=type=cache,target=/root/.cache/go-mod \
+RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # 复制源代码
@@ -34,11 +34,12 @@ COPY . .
 # xx-go 自动设置 GOOS/GOARCH/CC 等环境变量
 ENV CGO_ENABLED=1
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/root/.cache/go-mod \
+    --mount=type=cache,target=/go/pkg/mod \
     xx-go build \
     -ldflags="-s -w" \
+    -trimpath \
     -o kiro2api main.go && \
-    xx-verify kiro2api
+    xx-verify --static kiro2api
 
 # 运行阶段
 FROM alpine:3.19
