@@ -1,10 +1,11 @@
 module kiro2api
 
-go 1.23
+go 1.24.0
 
 require (
 	github.com/bytedance/sonic v1.14.1
 	github.com/gin-gonic/gin v1.11.0
+	github.com/google/uuid v1.3.0
 	github.com/pkoukk/tiktoken-go v0.1.7
 	github.com/stretchr/testify v1.11.1
 )
@@ -14,7 +15,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
-	github.com/google/uuid v1.3.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.55.0 // indirect
