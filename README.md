@@ -1,129 +1,151 @@
 # Kiro2API
 
-一个用 Go 编写的 Anthropic Claude API 兼容代理服务，将 Anthropic/OpenAI API 请求转换为 Kiro API 请求。
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go" alt="Go Version">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker" alt="Docker">
+</p>
 
-## 免责声明
+<p align="center">
+  <strong>🚀 将 Anthropic/OpenAI API 请求转换为 Kiro/AWS CodeWhisperer API 请求的代理服务</strong>
+</p>
 
-本项目仅供研究使用，Use at your own risk。使用本项目所导致的任何后果由使用人承担，与本项目无关。
-本项目与 AWS/KIRO/Anthropic/Claude 等官方无关，本项目不代表官方立场。
+---
 
-## 功能特性
+## ⚠️ 免责声明
 
-- **Anthropic API 兼容**: 完整支持 Anthropic Claude API 格式 (`/v1/messages`)
-- **OpenAI API 兼容**: 支持 OpenAI 格式 (`/v1/chat/completions`)
-- **流式响应**: 支持 SSE (Server-Sent Events) 流式输出
-- **Token 自动刷新**: 自动管理和刷新 OAuth Token
-- **多凭据支持**: 支持配置多个凭据，自动故障转移
-- **会话池**: 支持会话池和智能重试机制
-- **OAuth 授权**: 支持 Web 页面 OAuth 授权流程
-- **Thinking 模式**: 支持 Claude 的 extended thinking 功能
-- **工具调用**: 完整支持 function calling / tool use
-- **多模型支持**: 支持 Sonnet、Opus、Haiku 系列模型
-- **Web 管理界面**: 实时监控 Token 状态和使用情况
+本项目仅供学习研究使用，使用者需自行承担使用风险。本项目与 AWS/Kiro/Anthropic/Claude 等官方无关，不代表任何官方立场。
 
-## 支持的 API 端点
+---
 
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/v1/models` | GET | 获取可用模型列表 |
-| `/v1/messages` | POST | Anthropic API 代理 |
-| `/v1/messages/count_tokens` | POST | 估算 Token 数量 |
-| `/v1/chat/completions` | POST | OpenAI API 代理 |
-| `/api/tokens` | GET | Token 池状态 API |
-| `/oauth` | GET | OAuth 授权页面 |
-| `/` | GET | 管理 Dashboard |
+## 📖 项目简介
 
-## 快速开始
+**Kiro2API** 是一个用 Go 语言编写的高性能 API 代理服务，能够将标准的 Anthropic Claude API 和 OpenAI API 格式的请求无缝转换为 Kiro/AWS CodeWhisperer API 请求。支持流式响应、Thinking 模式、工具调用等高级功能。
 
-### 1. 配置环境变量
+---
 
-创建 `.env` 文件（参考 `.env.example`）：
+## ✨ 特性列表
 
-```bash
-# 客户端认证令牌（必填）
-KIRO_CLIENT_TOKEN=your-secure-random-password
+| 特性 | 描述 |
+|------|------|
+| 🔄 **双协议支持** | 同时兼容 Anthropic 和 OpenAI API 格式 |
+| 📡 **流式响应（SSE）** | 支持 Server-Sent Events 实时流式输出 |
+| 🧠 **Thinking 模式** | 支持 Claude Extended Thinking 功能 |
+| 🛠️ **工具调用** | 完整支持 Anthropic tool use / Function Calling |
+| 🔐 **多凭据支持** | 支持配置多个账号，智能轮换与故障转移 |
+| 🛡️ **防封号机制** | 请求指纹随机化、智能间隔、指数退避等 |
+| 🌐 **代理池支持** | 多代理轮换，增强稳定性 |
+| 📊 **Web 管理界面** | 实时监控 Token 状态和使用情况 |
+| 🔑 **OAuth 授权** | Web 页面一键获取 RefreshToken |
+| ♻️ **Token 自动刷新** | 自动管理和刷新 OAuth Token |
 
-# 会话池配置
-SESSION_POOL_MAX_SIZE=3          # 会话池最大容量
-SESSION_POOL_MAX_RETRIES=5       # 会话池最大重试次数
-SESSION_POOL_COOLDOWN=60s        # 会话池冷却时间
-SESSION_POOL_ENABLED=true        # 会话池功能开关
+---
 
-# OAuth 配置
-OAUTH_ENABLED=true                           # 授权功能开关
-OAUTH_TOKEN_FILE=/app/data/oauth_tokens.json # 授权令牌文件路径
+## 🏗️ 架构概览
 
-# 日志配置
-LOG_LEVEL=INFO                   # 日志级别: DEBUG, INFO, WARN, ERROR
-
-# 服务端口
-PORT=8080
+```mermaid
+graph LR
+    A[客户端] -->|Anthropic API| B[Kiro2API]
+    A -->|OpenAI API| B
+    B -->|转换请求| C[Kiro/CodeWhisperer API]
+    C -->|响应| B
+    B -->|转换响应| A
+    
+    subgraph Kiro2API
+        B --> D[认证管理]
+        B --> E[会话池]
+        B --> F[防封号模块]
+        D --> G[Token 轮换]
+    end
 ```
 
-### 2. 配置认证
+---
 
-#### 方式一：环境变量 JSON 格式
+## 🚀 快速开始
 
-```bash
-# 单凭据
-KIRO_AUTH_TOKEN='{"auth":"Social","refreshToken":"your_token"}'
+### 环境要求
 
-# 多凭据
-KIRO_AUTH_TOKEN='[
-  {"auth":"Social","refreshToken":"token1"},
-  {"auth":"IdC","refreshToken":"token2","clientId":"xxx","clientSecret":"xxx"}
-]'
-```
+- **Go**: 1.24 或更高版本（源码编译）
+- **Docker**: 20.10 或更高版本（容器部署）
+- **网络**: 能够访问 AWS 服务
 
-#### 方式二：配置文件
+### 安装方式
+
+#### 方式一：源码编译
 
 ```bash
-# 指向 JSON 配置文件
-KIRO_AUTH_TOKEN=/path/to/auth_config.json
-```
+# 克隆仓库
+git clone https://github.com/your-repo/kiro2api.git
+cd kiro2api
 
-配置文件格式（参考 `auth_config.json.example`）：
-
-```json
-[
-  {
-    "auth": "Social",
-    "refreshToken": "your_refresh_token"
-  },
-  {
-    "auth": "IdC",
-    "refreshToken": "your_refresh_token",
-    "clientId": "your_client_id",
-    "clientSecret": "your_client_secret"
-  }
-]
-```
-
-### 3. 启动服务
-
-#### 直接运行
-
-```bash
+# 编译
 go build -o kiro2api main.go
+
+# 运行
 ./kiro2api
 ```
 
-#### Docker 运行
+#### 方式二：Docker 部署
 
 ```bash
+# 构建镜像
 docker build -t kiro2api .
+
+# 运行容器
 docker run -p 8080:8080 --env-file .env kiro2api
 ```
 
-#### Docker Compose
+### 基础配置
+
+1. 复制配置文件模板：
 
 ```bash
-docker-compose -f docker-compose.updated.yml up -d
+cp .env.example .env
+cp auth_config.json.example auth_config.json
 ```
 
-### 4. 使用 API
+2. 编辑 `.env` 文件，设置必要的环境变量：
 
-#### Anthropic API 格式
+```bash
+# 必填：客户端认证令牌
+KIRO_CLIENT_TOKEN=your-secure-random-password
+
+# 必填：认证配置（JSON 或文件路径）
+KIRO_AUTH_TOKEN=./auth_config.json
+
+# 可选：服务端口
+PORT=8080
+```
+
+3. 编辑 `auth_config.json`，配置上游认证信息（参见[认证配置](#-认证配置)章节）
+
+4. 启动服务：
+
+```bash
+./kiro2api
+```
+
+---
+
+## 📡 API 使用
+
+### 支持的端点
+
+#### Anthropic API 兼容
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/v1/messages` | POST | Anthropic Claude API 代理 |
+| `/v1/messages/count_tokens` | POST | Token 计数接口 |
+| `/v1/models` | GET | 获取可用模型列表 |
+
+#### OpenAI API 兼容
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/v1/chat/completions` | POST | OpenAI Chat Completions API 代理 |
+
+### Anthropic API 格式示例
 
 ```bash
 curl http://127.0.0.1:8080/v1/messages \
@@ -138,7 +160,85 @@ curl http://127.0.0.1:8080/v1/messages \
   }'
 ```
 
-#### OpenAI API 格式
+**流式响应：**
+
+```bash
+curl http://127.0.0.1:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-client-token" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1024,
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "写一首诗"}
+    ]
+  }'
+```
+
+**Thinking 模式：**
+
+```bash
+curl http://127.0.0.1:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-client-token" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 16000,
+    "thinking": {
+      "type": "enabled",
+      "budget_tokens": 10000
+    },
+    "messages": [
+      {"role": "user", "content": "解决这道数学题..."}
+    ]
+  }'
+```
+
+或使用 `-thinking` 后缀自动启用：
+
+```bash
+curl http://127.0.0.1:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-client-token" \
+  -d '{
+    "model": "claude-sonnet-4-20250514-thinking",
+    "max_tokens": 16000,
+    "messages": [
+      {"role": "user", "content": "解决这道数学题..."}
+    ]
+  }'
+```
+
+**工具调用：**
+
+```bash
+curl http://127.0.0.1:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-client-token" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1024,
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "获取指定城市的天气",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "city": {"type": "string", "description": "城市名称"}
+          },
+          "required": ["city"]
+        }
+      }
+    ],
+    "messages": [
+      {"role": "user", "content": "北京今天天气怎么样？"}
+    ]
+  }'
+```
+
+### OpenAI API 格式示例
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -153,43 +253,148 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   }'
 ```
 
-## 配置说明
+**流式响应：**
 
-### 环境变量
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-client-token" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1024,
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "写一首诗"}
+    ]
+  }'
+```
 
-| 变量 | 类型 | 默认值 | 描述 |
-|------|------|--------|------|
-| `KIRO_CLIENT_TOKEN` | string | - | 客户端认证令牌（必填） |
-| `KIRO_AUTH_TOKEN` | string | - | 认证配置 JSON 或文件路径 |
-| `PORT` | string | `8080` | 服务监听端口 |
-| `LOG_LEVEL` | string | `INFO` | 日志级别 |
-| `GIN_MODE` | string | `release` | Gin 框架模式 |
-| `SESSION_POOL_ENABLED` | bool | `true` | 启用会话池 |
-| `SESSION_POOL_MAX_SIZE` | int | `3` | 会话池最大容量 |
-| `SESSION_POOL_MAX_RETRIES` | int | `5` | 最大重试次数 |
-| `SESSION_POOL_COOLDOWN` | duration | `60s` | 冷却时间 |
-| `OAUTH_ENABLED` | bool | `false` | 启用 OAuth 授权 |
-| `OAUTH_TOKEN_FILE` | string | - | OAuth Token 存储文件 |
-| `PROXY_POOL` | string | - | 代理池配置（逗号分隔） |
+---
 
-### 认证配置
+## ⚙️ 配置详解
 
-| 字段 | 类型 | 描述 |
-|------|------|------|
-| `auth` | string | 认证方式（`Social` / `IdC`） |
-| `refreshToken` | string | OAuth 刷新令牌 |
-| `clientId` | string | IdC 登录的客户端 ID（IdC 必填） |
-| `clientSecret` | string | IdC 登录的客户端密钥（IdC 必填） |
-| `disabled` | bool | 是否禁用该凭据 |
+### 基础配置
 
-**说明**：
-- `Social`: 社交账号登录（Google/GitHub 等）
-- `IdC`: AWS IAM Identity Center / Builder ID / IAM 登录
+| 变量 | 默认值 | 描述 |
+|------|--------|------|
+| `KIRO_CLIENT_TOKEN` | - | 客户端认证令牌（**必填**） |
+| `KIRO_AUTH_TOKEN` | - | 认证配置 JSON 或文件路径（**必填**） |
+| `PORT` | `8080` | 服务监听端口 |
+| `LOG_LEVEL` | `info` | 日志级别：debug, info, warn, error |
+| `GIN_MODE` | `release` | Gin 框架模式：debug, release, test |
 
-## 模型映射
+### 会话池配置
 
-| 请求模型 | 后端模型 |
-|----------|----------|
+| 变量 | 默认值 | 描述 |
+|------|--------|------|
+| `SESSION_POOL_ENABLED` | `true` | 启用会话池 |
+| `SESSION_POOL_MAX_SIZE` | `3` | 每个会话最大 Token 数量 |
+| `SESSION_POOL_MAX_RETRIES` | `5` | 429 错误最大重试次数 |
+| `SESSION_POOL_COOLDOWN` | `60s` | Token 冷却时间 |
+| `SESSION_POOL_TTL` | `30m` | 会话池过期时间 |
+
+### 防封号配置
+
+| 变量 | 默认值 | 描述 |
+|------|--------|------|
+| `RATE_LIMIT_MIN_INTERVAL` | `5s` | 单 token 最小请求间隔 |
+| `RATE_LIMIT_MAX_INTERVAL` | `15s` | 单 token 最大请求间隔 |
+| `RATE_LIMIT_MAX_CONSECUTIVE` | `3` | 单 token 最大连续使用次数 |
+| `RATE_LIMIT_DAILY_MAX` | `500` | 每个 token 每日最大请求次数 |
+| `RATE_LIMIT_COOLDOWN` | `5m` | Token 冷却时间 |
+| `RATE_LIMIT_BACKOFF_BASE` | `1m` | 指数退避基数 |
+| `RATE_LIMIT_BACKOFF_MAX` | `30m` | 指数退避最大值 |
+| `RATE_LIMIT_JITTER_PERCENT` | `30` | 请求间隔抖动百分比 |
+| `PROXY_POOL` | - | 代理池配置（逗号分隔） |
+
+### OAuth 配置
+
+| 变量 | 默认值 | 描述 |
+|------|--------|------|
+| `OAUTH_ENABLED` | `false` | 启用 OAuth 授权页面 |
+| `OAUTH_TOKEN_FILE` | - | OAuth Token 存储文件路径 |
+| `OAUTH_CALLBACK_BASE_URL` | - | OAuth 回调基础 URL（可选） |
+
+---
+
+## 🔑 认证配置
+
+### 客户端认证
+
+客户端调用 API 时需要提供认证令牌，支持两种方式：
+
+| 方式 | 格式 |
+|------|------|
+| x-api-key Header | `x-api-key: your-client-token` |
+| Authorization Bearer | `Authorization: Bearer your-client-token` |
+
+### 上游认证配置
+
+支持两种上游认证方式：
+
+| 认证方式 | 说明 | 必填字段 |
+|---------|------|---------|
+| **Social** | 社交账号登录（Google/GitHub 等） | `refreshToken` |
+| **IdC** | AWS IAM Identity Center / Builder ID | `refreshToken`, `clientId`, `clientSecret` |
+
+### auth_config.json 格式
+
+```json
+[
+  {
+    "auth": "Social",
+    "refreshToken": "your_social_refresh_token_here",
+    "disabled": false
+  },
+  {
+    "auth": "IdC",
+    "refreshToken": "your_idc_refresh_token_here",
+    "clientId": "your_idc_client_id",
+    "clientSecret": "your_idc_client_secret",
+    "disabled": false
+  }
+]
+```
+
+### 配置方式
+
+**方式一：环境变量 JSON 格式**
+
+```bash
+# 单凭据
+KIRO_AUTH_TOKEN='{"auth":"Social","refreshToken":"your_token"}'
+
+# 多凭据
+KIRO_AUTH_TOKEN='[
+  {"auth":"Social","refreshToken":"token1"},
+  {"auth":"IdC","refreshToken":"token2","clientId":"xxx","clientSecret":"xxx"}
+]'
+```
+
+**方式二：配置文件路径**
+
+```bash
+KIRO_AUTH_TOKEN=/path/to/auth_config.json
+```
+
+### Token 获取方式
+
+**Social Tokens：**
+- 通常位于 `~/.aws/sso/cache/` 目录下
+- 查找包含 `refreshToken` 字段的 JSON 文件
+
+**IdC Tokens：**
+- 位于 `~/.aws/sso/cache/` 目录下
+- 需要同时获取 `clientId` 和 `clientSecret`
+
+---
+
+## 🤖 模型支持
+
+### 模型映射
+
+| 请求模型名称 | 后端模型标识 |
+|-------------|-------------|
 | `claude-opus-4-5-20251101` | CLAUDE_OPUS_4_5_20251101_V1_0 |
 | `claude-sonnet-4-5-20250929` | CLAUDE_SONNET_4_5_20250929_V1_0 |
 | `claude-sonnet-4-20250514` | CLAUDE_SONNET_4_20250514_V1_0 |
@@ -197,205 +402,224 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | `claude-3-5-haiku-20241022` | auto |
 | `claude-haiku-4-5-20251001` | auto |
 
-**Thinking 模式**: 在模型名后添加 `-thinking` 后缀自动启用思考模式，如 `claude-sonnet-4-20250514-thinking`
-
-## 项目结构
-
-```
-kiro2api/
-├── main.go                     # 程序入口
-├── auth/                       # 认证模块
-│   ├── auth.go                 # 认证服务
-│   ├── config.go               # 配置加载
-│   ├── oauth.go                # OAuth 实现
-│   ├── token_manager.go        # Token 管理
-│   ├── refresh.go              # Token 刷新
-│   ├── fingerprint.go          # 设备指纹
-│   └── usage_checker.go        # 使用量检查
-├── server/                     # HTTP 服务
-│   ├── server.go               # 主服务器
-│   ├── handlers.go             # 请求处理器
-│   ├── middleware.go           # 中间件
-│   ├── openai_handlers.go      # OpenAI 兼容处理
-│   └── stream_processor.go     # 流式响应处理
-├── converter/                  # 协议转换
-│   ├── openai.go               # OpenAI 格式转换
-│   ├── codewhisperer.go        # CodeWhisperer 格式转换
-│   └── tools.go                # 工具转换
-├── parser/                     # 解析器
-│   ├── event_stream_types.go   # AWS EventStream 类型
-│   ├── header_parser.go        # 头部解析
-│   └── thinking_detector.go    # Thinking 模式检测
-├── types/                      # 类型定义
-│   ├── anthropic.go            # Anthropic 类型
-│   ├── openai.go               # OpenAI 类型
-│   ├── codewhisperer.go        # CodeWhisperer 类型
-│   └── usage_limits.go         # 使用限制类型
-├── config/                     # 配置
-│   ├── config.go               # 模型映射
-│   ├── constants.go            # 常量定义
-│   └── tuning.go               # 调优参数
-├── utils/                      # 工具函数
-│   ├── client.go               # HTTP 客户端
-│   ├── json.go                 # JSON 处理
-│   └── token_counter.go        # Token 计数
-├── logger/                     # 日志
-│   └── logger.go               # 日志工具
-├── static/                     # 静态资源
-│   ├── index.html              # Dashboard 页面
-│   ├── oauth.html              # OAuth 授权页面
-│   ├── css/                    # 样式文件
-│   └── js/                     # JavaScript 文件
-├── Dockerfile                  # Docker 构建文件
-├── docker-compose.updated.yml  # Docker Compose 配置
-└── README.md                   # 项目文档
-```
-
-## 技术栈
-
-- **Web 框架**: [Gin](https://github.com/gin-gonic/gin)
-- **HTTP 客户端**: Go 标准库 `net/http`
-- **JSON 处理**: [bytedance/sonic](https://github.com/bytedance/sonic)（高性能）
-- **日志**: [Zap](https://github.com/uber-go/zap)
-- **环境变量**: [godotenv](https://github.com/joho/godotenv)
-
-## 高级功能
-
 ### Thinking 模式
 
-支持 Claude 的 extended thinking 功能：
+在模型名后添加 `-thinking` 后缀可自动启用思考模式：
 
-```json
-{
-  "model": "claude-sonnet-4-20250514",
-  "max_tokens": 16000,
-  "thinking": {
-    "type": "enabled",
-    "budget_tokens": 10000
-  },
-  "messages": [...]
-}
+```
+claude-sonnet-4-20250514-thinking
 ```
 
-或使用 `-thinking` 后缀自动启用：
+**参数说明：**
+- `budget_tokens`: 思考预算，范围 1024~24576，默认 20000
+- Thinking 模式需要较大的 `max_tokens`（建议 16000+）
 
-```json
-{
-  "model": "claude-sonnet-4-20250514-thinking",
-  "max_tokens": 16000,
-  "messages": [...]
-}
-```
+---
 
-### 工具调用
+## 🛡️ 防封号机制
 
-完整支持 Anthropic 的 tool use 功能：
+Kiro2API 内置多层防封号保护机制：
 
-```json
-{
-  "model": "claude-sonnet-4-20250514",
-  "max_tokens": 1024,
-  "tools": [
-    {
-      "name": "get_weather",
-      "description": "获取指定城市的天气",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "city": {"type": "string"}
-        },
-        "required": ["city"]
-      }
-    }
-  ],
-  "messages": [...]
-}
-```
+### 1. 请求指纹随机化
+- 每个 Token 绑定唯一的客户端指纹
+- 包括：User-Agent、语言、时区、屏幕分辨率等
+- 指纹在 Token 生命周期内保持一致
 
-### 流式响应
+### 2. 智能请求间隔
+- 随机间隔 5-15 秒（可配置）
+- 额外 30% 随机抖动
+- 模拟人类操作节奏
 
-设置 `stream: true` 启用 SSE 流式响应：
+### 3. 智能 Token 轮换
+- 严格轮询策略
+- 连续使用 3 次后自动切换
+- 基于剩余额度加权选择
 
-```json
-{
-  "model": "claude-sonnet-4-20250514",
-  "max_tokens": 1024,
-  "stream": true,
-  "messages": [...]
-}
-```
+### 4. 指数退避机制
+- 收到 403/429 错误后触发
+- 退避序列：1m → 2m → 4m → ... → 最大 30m
+- 自动恢复
 
-### OAuth 授权
+### 5. 每日请求限制
+- 每个 Token 每日最多 500 次请求
+- 自动在 UTC 00:00 重置
 
-启用 OAuth 后，访问 `/oauth` 页面进行账号授权：
-
-1. 选择认证方式（Social / IdC）
-2. 输入必要的凭据信息
-3. 完成授权后自动添加到 Token 池
-
-## 认证方式
-
-支持两种 API Key 认证方式：
-
-1. **x-api-key Header**
-   ```
-   x-api-key: your-client-token
-   ```
-
-2. **Authorization Bearer**
-   ```
-   Authorization: Bearer your-client-token
-   ```
-
-## Docker 部署
-
-### 构建镜像
+### 6. 代理池支持
+- 多代理随机选择
+- 使用次数限制（单个代理最多使用 10 次后轮换）
+- 健康检查与自动恢复
 
 ```bash
-# 标准构建
-docker build -t kiro2api .
-
-# 多平台构建
-docker buildx build --platform linux/amd64,linux/arm64 -t kiro2api .
+# 代理池配置示例
+PROXY_POOL=http://127.0.0.1:40000,http://127.0.0.1:40001,http://127.0.0.1:40002
 ```
 
-### 运行容器
+---
+
+## 🌐 Web 管理界面
+
+| 端点 | 描述 |
+|------|------|
+| `/` | Dashboard 管理页面 |
+| `/oauth` | OAuth 授权页面 |
+| `/api/tokens` | Token 池状态 API |
+| `/api/anti-ban/status` | 防封号状态 API |
+
+访问 `http://localhost:8080/` 可查看 Dashboard，实时监控：
+- Token 状态和剩余额度
+- 请求统计
+- 防封号状态
+
+---
+
+## 🐳 Docker 部署
+
+### 使用 docker run
 
 ```bash
 docker run -d \
   --name kiro2api \
   -p 8080:8080 \
-  -e KIRO_CLIENT_TOKEN=your-token \
+  -e KIRO_CLIENT_TOKEN=your-secure-token \
   -e KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"}]' \
+  -e SESSION_POOL_ENABLED=true \
+  -e LOG_LEVEL=info \
   -v /path/to/data:/app/data \
   kiro2api
 ```
 
-## 注意事项
+### 使用 docker-compose
 
-1. **凭证安全**: 请妥善保管认证配置文件，不要提交到版本控制
-2. **Token 刷新**: 服务会自动刷新过期的 Token，无需手动干预
-3. **请求体限制**: 支持最大 100MB 的请求体，可处理大图片上传
-4. **额度统计**: 自动统计基础额度、免费试用额度和 Bonus 额度
+创建 `docker-compose.yml`：
 
-## 更新日志
+```yaml
+version: '3.8'
 
-### 2026.1.23
+services:
+  kiro2api:
+    build: .
+    container_name: kiro2api
+    ports:
+      - "8080:8080"
+    environment:
+      - KIRO_CLIENT_TOKEN=your-secure-token
+      - KIRO_AUTH_TOKEN=/app/config/auth_config.json
+      - PORT=8080
+      - LOG_LEVEL=info
+      - GIN_MODE=release
+      - SESSION_POOL_ENABLED=true
+      - SESSION_POOL_MAX_SIZE=3
+      - SESSION_POOL_MAX_RETRIES=5
+      - OAUTH_ENABLED=true
+      - OAUTH_TOKEN_FILE=/app/data/oauth_tokens.json
+    volumes:
+      - ./auth_config.json:/app/config/auth_config.json:ro
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
 
-借鉴 kiro.rs 2026.1.6 版本的改进：
+启动服务：
 
-- **增大请求体限制**: 100MB 限制，解决图片上传问题
-- **Bonus 额度计入**: 修复额度统计不全的问题
-- **完善文档**: 大幅更新 README 文档
+```bash
+docker-compose up -d
+```
 
-## 致谢
+### 多平台构建
 
-本项目的实现离不开以下项目的参考：
+```bash
+# 构建 amd64 和 arm64 镜像
+docker buildx build --platform linux/amd64,linux/arm64 -t kiro2api .
+```
+
+---
+
+## 🔧 开发
+
+### 项目结构
+
+```
+kiro2api/
+├── main.go                 # 程序入口
+├── auth/                   # 认证模块
+│   ├── auth.go             # 认证服务
+│   ├── config.go           # 配置加载
+│   ├── oauth.go            # OAuth 实现
+│   ├── token_manager.go    # Token 管理
+│   ├── fingerprint.go      # 设备指纹
+│   ├── rate_limiter.go     # 速率限制
+│   └── proxy_pool.go       # 代理池
+├── server/                 # HTTP 服务
+│   ├── server.go           # 主服务器
+│   ├── handlers.go         # 请求处理器
+│   ├── middleware.go       # 中间件
+│   ├── openai_handlers.go  # OpenAI 兼容处理
+│   └── stream_processor.go # 流式响应处理
+├── converter/              # 协议转换
+│   ├── openai.go           # OpenAI 格式转换
+│   ├── codewhisperer.go    # CodeWhisperer 格式转换
+│   └── tools.go            # 工具转换
+├── parser/                 # 解析器
+│   ├── event_stream_types.go   # AWS EventStream 类型
+│   ├── header_parser.go        # 头部解析
+│   └── thinking_detector.go    # Thinking 模式检测
+├── types/                  # 类型定义
+│   ├── anthropic.go        # Anthropic 类型
+│   ├── openai.go           # OpenAI 类型
+│   └── codewhisperer.go    # CodeWhisperer 类型
+├── config/                 # 配置
+│   ├── config.go           # 模型映射
+│   └── constants.go        # 常量定义
+├── utils/                  # 工具函数
+├── logger/                 # 日志模块
+├── static/                 # 静态资源（Web 界面）
+├── Dockerfile              # Docker 构建文件
+└── README.md               # 项目文档
+```
+
+### 技术栈
+
+| 组件 | 库 |
+|------|-----|
+| Web 框架 | [gin-gonic/gin](https://github.com/gin-gonic/gin) v1.11.0 |
+| JSON 处理 | [bytedance/sonic](https://github.com/bytedance/sonic) v1.14.1（高性能） |
+| Token 计数 | [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) v0.1.7 |
+| UUID 生成 | [google/uuid](https://github.com/google/uuid) v1.3.0 |
+| 环境变量 | [joho/godotenv](https://github.com/joho/godotenv) v1.5.1 |
+
+### 本地开发
+
+```bash
+# 安装依赖
+go mod download
+
+# 开发模式运行
+GIN_MODE=debug LOG_LEVEL=debug go run main.go
+
+# 运行测试
+go test ./...
+
+# 构建
+go build -o kiro2api main.go
+```
+
+---
+
+## 📜 License
+
+本项目采用 [MIT License](LICENSE) 开源协议。
+
+---
+
+## 🙏 致谢
+
+本项目的实现参考了以下开源项目：
+
 - [kiro.rs](https://github.com/hank9999/kiro.rs)
 - [proxycast](https://github.com/aiclientproxy/proxycast)
 
-再次由衷感谢！
-
-## License
-
-MIT
+感谢以上项目的作者和贡献者！
