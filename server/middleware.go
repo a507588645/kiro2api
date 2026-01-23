@@ -4,11 +4,24 @@ import (
 	"net/http"
 	"strings"
 
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/utils"
 
 	"github.com/gin-gonic/gin"
 )
+
+// MaxBodySizeMiddleware 请求体大小限制中间件
+// 借鉴 kiro.rs 2026.1.6: 增大请求体限制缓解图片上传问题
+func MaxBodySizeMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 只对 POST/PUT/PATCH 请求限制
+		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, config.MaxRequestBodySize)
+		}
+		c.Next()
+	}
+}
 
 // PathBasedAuthMiddleware 创建基于路径的API密钥验证中间件
 func PathBasedAuthMiddleware(authToken string, protectedPrefixes []string) gin.HandlerFunc {

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
 )
@@ -13,6 +14,24 @@ import (
 // ConvertOpenAIToAnthropic 将OpenAI请求转换为Anthropic请求
 func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequest {
 	var anthropicMessages []types.AnthropicRequestMessage
+
+	// 收集所有历史中的 tool_use_id，用于验证 tool_result 配对
+	// 修复: 验证并过滤 tool_use/tool_result 配对
+	// 参考: kiro.rs 2026.1.6 - 修复了 tool_use 格式问题
+	allToolUseIds := make(map[string]bool)
+	historyToolResultIds := make(map[string]bool)
+
+	// 第一遍：收集所有 tool_use_id 和已配对的 tool_result_id
+	for _, msg := range openaiReq.Messages {
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			for _, tc := range msg.ToolCalls {
+				allToolUseIds[tc.ID] = true
+			}
+		}
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			historyToolResultIds[msg.ToolCallID] = true
+		}
+	}
 
 	// 转换消息
 	for i := 0; i < len(openaiReq.Messages); i++ {
@@ -28,6 +47,14 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 				if currentMsg.Role != "tool" {
 					i-- // 回退一步，让外层循环处理非 tool 消息
 					break
+				}
+
+				// 验证 tool_result 是否有对应的 tool_use
+				// 修复: 跳过孤立的 tool_result
+				if !allToolUseIds[currentMsg.ToolCallID] {
+					logger.Warn("跳过孤立的 tool_result：找不到对应的 tool_use",
+						logger.String("tool_use_id", currentMsg.ToolCallID))
+					continue
 				}
 
 				var contentStr string
@@ -99,8 +126,29 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 				}
 			}
 
+			// 检查是否有文本内容
+			hasTextContent := false
+			for _, block := range contentBlocks {
+				if blockMap, ok := block.(map[string]any); ok {
+					if blockMap["type"] == "text" {
+						hasTextContent = true
+						break
+					}
+				}
+			}
+
 			// 如果有内容块，添加消息
 			if len(contentBlocks) > 0 {
+				// 修复: 当仅有 tool_use 块没有 text 块时，添加占位符
+				// 参考: kiro.rs - 格式要求 content 字段不能为空
+				if !hasTextContent && len(msg.ToolCalls) > 0 {
+					// 在开头插入占位符文本块
+					placeholderBlock := map[string]any{
+						"type": "text",
+						"text": "There is a tool use.",
+					}
+					contentBlocks = append([]any{placeholderBlock}, contentBlocks...)
+				}
 				anthropicMessages = append(anthropicMessages, types.AnthropicRequestMessage{
 					Role:    "assistant",
 					Content: contentBlocks,

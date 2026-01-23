@@ -8,48 +8,68 @@
 </head>
 <body>
     <div class="container">
+        <!-- Header -->
         <div class="header">
-            <h1>🔐 KIRO Token Dashboard</h1>
-            <p>实时监控Token池状态和使用情况</p>
-        </div>
-        
-        <div class="controls">
-            <a href="/oauth" class="oauth-btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 500; margin-right: 12px;">
-                🔐 添加账号授权
-            </a>
-            <button class="import-btn" id="importBtn">
-                📥 导入账号
-            </button>
-            <input type="file" id="importFile" accept=".json" style="display: none;">
-            <button class="refresh-btn">
-                🔄 手动刷新
-            </button>
+            <div class="header-content">
+                <h1>🔐 KIRO Token Dashboard</h1>
+                <p>实时监控Token池状态和使用情况</p>
+            </div>
+            
             <div class="auto-refresh">
                 <span>自动刷新</span>
                 <div class="switch"></div>
             </div>
         </div>
         
+        <!-- Status Bar -->
         <div class="status-bar">
-            <div class="status-item">
+            <div class="status-card">
                 <span class="status-label">总Token数</span>
                 <span class="status-value" id="totalTokens">-</span>
             </div>
-            <div class="status-item">
+            <div class="status-card">
                 <span class="status-label">可用Token</span>
                 <span class="status-value" id="activeTokens">-</span>
             </div>
-            <div class="status-item">
+            <div class="status-card">
                 <span class="status-label">最后更新</span>
                 <span class="status-value" id="lastUpdate">-</span>
             </div>
         </div>
         
+        <!-- Controls -->
+        <div class="controls">
+            <a href="/oauth" class="btn btn-primary">
+                <span>🔐</span> 添加账号授权
+            </a>
+            
+            <button class="btn btn-secondary" id="importBtn">
+                <span>📥</span> 导入账号
+            </button>
+            <input type="file" id="importFile" accept=".json" style="display: none;">
+            
+            <button class="btn btn-secondary refresh-btn">
+                <span>🔄</span> 手动刷新
+            </button>
+
+            <!-- Batch Actions (Floating or Inline) -->
+            <div class="batch-actions" id="batchActions" style="display: none;">
+                <span class="selected-count">已选择 <span id="selectedCount">0</span> 个</span>
+                <button class="btn btn-danger btn-batch-delete" id="batchDeleteBtn">
+                    <span>🗑️</span> 批量删除
+                </button>
+            </div>
+        </div>
+        
+        <!-- Main Table Card -->
         <div class="main-card">
             <div class="table-container">
                 <table>
                     <thead>
                         <tr>
+                            <th class="checkbox-col">
+                                <input type="checkbox" id="selectAll">
+                            </th>
                             <th>用户邮箱</th>
                             <th>Token预览</th>
                             <th>认证方式</th>
@@ -57,11 +77,12 @@
                             <th>过期时间</th>
                             <th>最后使用</th>
                             <th>状态</th>
+                            <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="tokenTableBody">
                         <tr>
-                            <td colspan="7" class="loading">
+                            <td colspan="9" class="loading">
                                 <div class="spinner"></div>
                                 正在加载Token数据...
                             </td>

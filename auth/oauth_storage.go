@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -102,6 +103,23 @@ func (s *OAuthTokenStore) GetTokens() []StoredToken {
 	return append([]StoredToken{}, s.Tokens...)
 }
 
+// DeleteToken 删除指定 ID 的 token
+func (s *OAuthTokenStore) DeleteToken(id string) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for i, token := range s.Tokens {
+		if token.ID == id {
+			// 删除指定索引的元素
+			s.Tokens = append(s.Tokens[:i], s.Tokens[i+1:]...)
+			logger.Info("删除OAuth token", logger.String("id", id), logger.String("provider", token.Provider))
+			return s.save()
+		}
+	}
+
+	return fmt.Errorf("未找到ID为 %s 的token", id)
+}
+
 // ToAuthConfigs 转换为 AuthConfig 格式
 func (s *OAuthTokenStore) ToAuthConfigs() []AuthConfig {
 	s.mutex.RLock()
@@ -119,6 +137,9 @@ func (s *OAuthTokenStore) ToAuthConfigs() []AuthConfig {
 			RefreshToken: t.RefreshToken,
 			ClientID:     t.ClientID,
 			ClientSecret: t.ClientSecret,
+			Source:       "oauth",
+			OAuthID:      t.ID,
+			Deletable:    true,
 		}
 	}
 	return configs

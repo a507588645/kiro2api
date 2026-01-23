@@ -29,12 +29,17 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 
 	r := gin.New()
 
+	// 设置请求体大小限制（借鉴 kiro.rs 2026.1.6: 解决图片上传问题）
+	r.MaxMultipartMemory = config.MaxMultipartMemory
+
 	// 添加中间件
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	// 注入请求ID，便于日志追踪
 	r.Use(RequestIDMiddleware())
 	r.Use(corsMiddleware())
+	// 请求体大小限制中间件（100MB，支持大图片上传）
+	r.Use(MaxBodySizeMiddleware())
 	// 注入AuthService到上下文，供错误处理时使用
 	r.Use(func(c *gin.Context) {
 		c.Set("auth_service", authService)

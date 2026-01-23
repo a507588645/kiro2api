@@ -67,3 +67,13 @@ const (
 	// ThinkingBudgetTokensMin thinking budget_tokens 最小值
 	ThinkingBudgetTokensMin = 1024
 )
+
+// 请求体大小限制常量（借鉴 kiro.rs 2026.1.6 - 解决图片上传问题）
+const (
+	// MaxRequestBodySize 最大请求体大小（100MB）
+	// 用于支持大图片上传（base64 编码会使图片大小增加约 33%）
+	MaxRequestBodySize = 100 * 1024 * 1024
+
+	// MaxMultipartMemory 最大 multipart 内存（100MB）
+	MaxMultipartMemory = 100 * 1024 * 1024
+)

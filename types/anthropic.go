@@ -93,6 +93,48 @@ type AnthropicRequest struct {
 	Thinking    *Thinking                 `json:"thinking,omitempty"` // Claude 深度思考配置
 }
 
+// UnmarshalJSON 自定义反序列化，支持传统 Anthropic API 格式
+// 修复: 传统 Anthropic API 格式兼容问题
+// 参考: kiro.rs 2026.1.6 - 修复了传统 Anthropic API 格式兼容问题
+func (r *AnthropicRequest) UnmarshalJSON(data []byte) error {
+	// 使用别名避免递归
+	type AnthropicRequestAlias AnthropicRequest
+	
+	// 首先尝试标准格式
+	aux := &struct {
+		*AnthropicRequestAlias
+		System json.RawMessage `json:"system,omitempty"`
+	}{
+		AnthropicRequestAlias: (*AnthropicRequestAlias)(r),
+	}
+	
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	
+	// 处理 system 字段
+	if len(aux.System) > 0 {
+		// 尝试解析为字符串（传统格式）
+		var systemStr string
+		if err := json.Unmarshal(aux.System, &systemStr); err == nil {
+			// 传统字符串格式，转换为数组格式
+			r.System = []AnthropicSystemMessage{{
+				Type: "text",
+				Text: systemStr,
+			}}
+		} else {
+			// 尝试解析为数组格式（标准格式）
+			var systemArr []AnthropicSystemMessage
+			if err := json.Unmarshal(aux.System, &systemArr); err == nil {
+				r.System = systemArr
+			}
+			// 如果都失败，System 将保持为 nil
+		}
+	}
+	
+	return nil
+}
+
 // AnthropicStreamResponse 表示 Anthropic 流式响应的结构
 type AnthropicStreamResponse struct {
 	Type         string `json:"type"`

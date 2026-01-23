@@ -46,10 +46,11 @@ func init() {
 			}).DialContext,
 
 			// TLS配置
+			// 参考: kiro.rs 2026.1.6 - 现在支持通过配置文件切换两种tls后端了
 			TLSHandshakeTimeout: config.HTTPClientTLSHandshakeTimeout,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: skipTLS,
-				MinVersion:         tls.VersionTLS12,
+				MinVersion:         getTLSMinVersionInternal(), // 使用可配置的最低版本
 				MaxVersion:         tls.VersionTLS13,
 				CipherSuites: []uint16{
 					tls.TLS_AES_256_GCM_SHA384,
@@ -68,9 +69,36 @@ func init() {
 	}
 }
 
-// shouldSkipTLSVerify 根据GIN_MODE决定是否跳过TLS证书验证
+// shouldSkipTLSVerify 根据环境变量决定是否跳过TLS证书验证
+// 参考: kiro.rs 2026.1.6 - 现在支持通过配置文件切换两种tls后端了
+// 支持的环境变量:
+//   - TLS_SKIP_VERIFY=true: 显式跳过TLS验证
+//   - GIN_MODE=debug: 开发模式自动跳过
+//   - TLS_INSECURE=true: 与TLS_SKIP_VERIFY相同
 func shouldSkipTLSVerify() bool {
+	// 显式配置优先
+	if os.Getenv("TLS_SKIP_VERIFY") == "true" || os.Getenv("TLS_INSECURE") == "true" {
+		return true
+	}
+	// 开发模式
 	return os.Getenv("GIN_MODE") == "debug"
+}
+
+// getTLSMinVersionInternal 内部函数，用于 init() 阶段
+func getTLSMinVersionInternal() uint16 {
+	switch os.Getenv("TLS_MIN_VERSION") {
+	case "1.3":
+		return tls.VersionTLS13
+	default:
+		return tls.VersionTLS12
+	}
+}
+
+// GetTLSMinVersion 获取最低 TLS 版本
+// 支持的环境变量:
+//   - TLS_MIN_VERSION: 可选值 "1.2", "1.3"
+func GetTLSMinVersion() uint16 {
+	return getTLSMinVersionInternal()
 }
 
 // DoRequest 执行HTTP请求

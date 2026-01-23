@@ -113,6 +113,7 @@ func (c *UsageLimitsChecker) CheckUsageLimits(token types.TokenInfo) (*types.Usa
 }
 
 // logUsageLimits 记录使用限制的关键信息
+// 借鉴 kiro.rs 2026.1.6: 修复额度统计不全的问题，bonus 现在被计入了
 func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 	for _, breakdown := range limits.UsageBreakdownList {
 		if breakdown.ResourceType == "CREDIT" {
@@ -120,13 +121,13 @@ func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 			var totalLimit float64
 			var totalUsed float64
 
-			// 基础额度
+			// 1. 基础额度
 			baseLimit := breakdown.UsageLimitWithPrecision
 			baseUsed := breakdown.CurrentUsageWithPrecision
 			totalLimit += baseLimit
 			totalUsed += baseUsed
 
-			// 免费试用额度
+			// 2. 免费试用额度
 			var freeTrialLimit float64
 			var freeTrialUsed float64
 			if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
@@ -134,6 +135,16 @@ func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 				freeTrialUsed = breakdown.FreeTrialInfo.CurrentUsageWithPrecision
 				totalLimit += freeTrialLimit
 				totalUsed += freeTrialUsed
+			}
+
+			// 3. Bonus 额度（借鉴 kiro.rs 2026.1.6 更新）
+			var bonusLimit float64
+			var bonusUsed float64
+			if breakdown.BonusInfo != nil {
+				bonusLimit = breakdown.BonusInfo.UsageLimitWithPrecision
+				bonusUsed = breakdown.BonusInfo.CurrentUsageWithPrecision
+				totalLimit += bonusLimit
+				totalUsed += bonusUsed
 			}
 
 			available := totalLimit - totalUsed
@@ -147,9 +158,17 @@ func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 				logger.Float64("base_used", baseUsed),
 				logger.Float64("free_trial_limit", freeTrialLimit),
 				logger.Float64("free_trial_used", freeTrialUsed),
+				logger.Float64("bonus_limit", bonusLimit),
+				logger.Float64("bonus_used", bonusUsed),
 				logger.String("free_trial_status", func() string {
 					if breakdown.FreeTrialInfo != nil {
 						return breakdown.FreeTrialInfo.FreeTrialStatus
+					}
+					return "NONE"
+				}()),
+				logger.String("bonus_status", func() string {
+					if breakdown.BonusInfo != nil && breakdown.BonusInfo.BonusStatus != "" {
+						return breakdown.BonusInfo.BonusStatus
 					}
 					return "NONE"
 				}()))

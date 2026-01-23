@@ -35,6 +35,7 @@ type UsageBreakdown struct {
 	CurrentOverages              int            `json:"currentOverages"`
 	CurrentOveragesWithPrecision float64        `json:"currentOveragesWithPrecision"`
 	FreeTrialInfo                *FreeTrialInfo `json:"freeTrialInfo,omitempty"`
+	BonusInfo                    *BonusInfo     `json:"bonusInfo,omitempty"` // 借鉴 kiro.rs 2026.1.6: bonus 额度计入
 	DisplayName                  string         `json:"displayName"`
 	DisplayNamePlural            string         `json:"displayNamePlural"`
 }
@@ -43,6 +44,15 @@ type UsageBreakdown struct {
 type FreeTrialInfo struct {
 	FreeTrialExpiry           float64 `json:"freeTrialExpiry"`
 	FreeTrialStatus           string  `json:"freeTrialStatus"`
+	UsageLimit                int     `json:"usageLimit"`
+	UsageLimitWithPrecision   float64 `json:"usageLimitWithPrecision"`
+	CurrentUsage              int     `json:"currentUsage"`
+	CurrentUsageWithPrecision float64 `json:"currentUsageWithPrecision"`
+}
+
+// BonusInfo bonus 额度信息（借鉴 kiro.rs 2026.1.6: 修复额度统计不全的问题）
+type BonusInfo struct {
+	BonusStatus               string  `json:"bonusStatus,omitempty"`
 	UsageLimit                int     `json:"usageLimit"`
 	UsageLimitWithPrecision   float64 `json:"usageLimitWithPrecision"`
 	CurrentUsage              int     `json:"currentUsage"`
@@ -82,6 +92,7 @@ type TokenWithUsage struct {
 }
 
 // GetAvailableCount 计算可用的调用次数 (基于CREDIT资源类型，返回浮点精度)
+// 借鉴 kiro.rs 2026.1.6: 修复额度统计不全的问题，bonus 现在被计入了
 func (t *TokenWithUsage) GetAvailableCount() float64 {
 	if t.UsageLimits == nil {
 		return 0.0
@@ -91,15 +102,21 @@ func (t *TokenWithUsage) GetAvailableCount() float64 {
 		if breakdown.ResourceType == "CREDIT" {
 			var totalAvailable float64
 
-			// 优先使用免费试用额度 (如果存在且处于ACTIVE状态)
+			// 1. 优先使用免费试用额度 (如果存在且处于ACTIVE状态)
 			if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
 				freeTrialAvailable := breakdown.FreeTrialInfo.UsageLimitWithPrecision - breakdown.FreeTrialInfo.CurrentUsageWithPrecision
 				totalAvailable += freeTrialAvailable
 			}
 
-			// 加上基础额度
+			// 2. 加上基础额度
 			baseAvailable := breakdown.UsageLimitWithPrecision - breakdown.CurrentUsageWithPrecision
 			totalAvailable += baseAvailable
+
+			// 3. 加上 bonus 额度（借鉴 kiro.rs 2026.1.6 更新）
+			if breakdown.BonusInfo != nil {
+				bonusAvailable := breakdown.BonusInfo.UsageLimitWithPrecision - breakdown.BonusInfo.CurrentUsageWithPrecision
+				totalAvailable += bonusAvailable
+			}
 
 			if totalAvailable < 0 {
 				return 0.0

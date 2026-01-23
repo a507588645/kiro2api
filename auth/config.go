@@ -15,6 +15,10 @@ type AuthConfig struct {
 	ClientID     string `json:"clientId,omitempty"`
 	ClientSecret string `json:"clientSecret,omitempty"`
 	Disabled     bool   `json:"disabled,omitempty"`
+	// 新增字段用于标识来源和删除支持
+	Source    string `json:"source,omitempty"`    // "env" 或 "oauth"
+	OAuthID   string `json:"oauthId,omitempty"`   // OAuth token的ID（用于删除）
+	Deletable bool   `json:"deletable,omitempty"` // 是否可删除
 }
 
 // 认证方法常量
@@ -22,6 +26,29 @@ const (
 	AuthMethodSocial = "Social"
 	AuthMethodIdC    = "IdC"
 )
+
+// normalizeAuthType 统一认证方式名称
+// 参考: kiro.rs 2026.1.6 - 统一多种认证方式为 IdC
+// 支持的别名:
+//   - IdC/idc/IAM/iam/Builder-ID/builder-id/BuilderID/builderid -> IdC
+//   - Social/social/google/github/Google/GitHub -> Social
+func normalizeAuthType(authType string) string {
+	switch authType {
+	// IdC 别名
+	case "IdC", "idc", "IDC",
+		"IAM", "iam", "Iam",
+		"Builder-ID", "builder-id", "BuilderID", "builderid", "BUILDER_ID":
+		return AuthMethodIdC
+	// Social 别名
+	case "Social", "social", "SOCIAL",
+		"Google", "google", "GOOGLE",
+		"GitHub", "github", "GITHUB":
+		return AuthMethodSocial
+	default:
+		// 默认返回原值，后续验证时处理
+		return authType
+	}
+}
 
 // loadConfigs 从环境变量加载配置
 func loadConfigs() ([]AuthConfig, error) {
@@ -103,12 +130,22 @@ func GetConfigs() ([]AuthConfig, error) {
 	// 1. 尝试从环境变量加载（可选）
 	envConfigs, envErr := loadConfigs()
 	if envErr == nil {
+		// 标记环境变量来源的配置
+		for i := range envConfigs {
+			envConfigs[i].Source = "env"
+			envConfigs[i].Deletable = false // 环境变量配置不可删除
+		}
 		allConfigs = append(allConfigs, envConfigs...)
 	}
 
 	// 2. 从 OAuth 存储加载
 	oauthStore := GetOAuthTokenStore()
 	oauthConfigs := oauthStore.ToAuthConfigs()
+	// 标记OAuth来源的配置
+	for i := range oauthConfigs {
+		oauthConfigs[i].Source = "oauth"
+		oauthConfigs[i].Deletable = true // OAuth配置可删除
+	}
 	allConfigs = append(allConfigs, oauthConfigs...)
 
 	// 3. 如果两者都为空，返回错误
@@ -152,6 +189,16 @@ func processConfigs(configs []AuthConfig) []AuthConfig {
 		// 设置默认认证类型
 		if config.AuthType == "" {
 			config.AuthType = AuthMethodSocial
+		} else {
+			// 标准化认证类型名称（支持别名）
+			// 参考: kiro.rs 2026.1.6 - 统一多种认证方式为 IdC
+			originalType := config.AuthType
+			config.AuthType = normalizeAuthType(config.AuthType)
+			if config.AuthType != originalType {
+				logger.Debug("认证类型别名转换",
+					logger.String("original", originalType),
+					logger.String("normalized", config.AuthType))
+			}
 		}
 
 		// 验证IdC认证的必要字段

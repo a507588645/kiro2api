@@ -51,10 +51,14 @@ func ValidateAndProcessToolsWithMapping(tools []types.OpenAITool) (*types.Conver
 		}
 
 		// 过滤不支持的工具：web_search (不发送到上游)
+		// 评估: kiro.rs 通过 MCP 协议实现了 web_search 支持
+		// 当前项目暂不支持 web_search，保留过滤逻辑
+		// TODO: 未来可考虑实现 MCP 协议支持 web_search
 		if tool.Function.Name == "web_search" || tool.Function.Name == "websearch" {
-			logger.Warn("过滤不支持的工具定义",
+			logger.Info("过滤 web_search 工具定义",
 				logger.String("tool_name", tool.Function.Name),
-				logger.String("reason", "web_search 工具不被后端支持"))
+				logger.String("reason", "当前版本暂不支持 web_search，请参考 kiro.rs 的 MCP 实现"),
+				logger.String("status", "filtered"))
 			continue
 		}
 
@@ -396,11 +400,14 @@ func convertContentBlock(block map[string]any) (map[string]any, error) {
 
 	case "tool_use":
 		// 过滤不支持的web_search工具调用（返回nil表示跳过）
+		// 评估: kiro.rs 通过 MCP 协议实现了 web_search 支持
+		// 当前项目暂不支持 web_search，保留过滤逻辑
 		if name, ok := block["name"].(string); ok {
 			if name == "web_search" || name == "websearch" {
-				logger.Warn("过滤不支持的工具调用",
+				logger.Info("过滤 web_search 工具调用",
 					logger.String("tool_name", name),
-					logger.String("reason", "web_search 工具不被后端支持"))
+					logger.String("reason", "当前版本暂不支持 web_search"),
+					logger.String("status", "filtered"))
 				return nil, nil
 			}
 		}

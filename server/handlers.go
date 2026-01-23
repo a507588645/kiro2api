@@ -452,6 +452,10 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"last_used":       "未知",
 				"status":          "disabled",
 				"error":           "配置已禁用",
+				// 删除相关字段
+				"source":          authConfig.Source,
+				"oauth_id":        authConfig.OAuthID,
+				"deletable":       authConfig.Deletable,
 			}
 			tokenList = append(tokenList, tokenData)
 			continue
@@ -470,6 +474,10 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"last_used":       "未知",
 				"status":          "error",
 				"error":           err.Error(),
+				// 删除相关字段
+				"source":          authConfig.Source,
+				"oauth_id":        authConfig.OAuthID,
+				"deletable":       authConfig.Deletable,
 			}
 			tokenList = append(tokenList, tokenData)
 			continue
@@ -501,6 +509,10 @@ func handleTokenPoolAPI(c *gin.Context) {
 			"expires_at":      tokenInfo.ExpiresAt.Format(time.RFC3339),
 			"last_used":       time.Now().Format(time.RFC3339),
 			"status":          "active",
+			// 删除相关字段
+			"source":          authConfig.Source,
+			"oauth_id":        authConfig.OAuthID,
+			"deletable":       authConfig.Deletable,
 		}
 
 		// 添加使用限制详细信息 (基于CREDIT资源类型)
