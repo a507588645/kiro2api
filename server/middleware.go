@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -36,6 +37,29 @@ func PathBasedAuthMiddleware(authToken string, protectedPrefixes []string) gin.H
 		}
 
 		if !validateAPIKey(c, authToken) {
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// UIAuthMiddleware 保护 Web UI 和管理端点（Basic Auth）
+func UIAuthMiddleware(uiPassword string, protectedPrefixes []string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if uiPassword == "" {
+			c.Next()
+			return
+		}
+
+		path := c.Request.URL.Path
+		if path != "/" && !requiresAuth(path, protectedPrefixes) {
+			c.Next()
+			return
+		}
+
+		if !validateUIPassword(c, uiPassword) {
 			c.Abort()
 			return
 		}
@@ -130,6 +154,23 @@ func validateAPIKey(c *gin.Context, authToken string) bool {
 		logger.Error("authToken验证失败",
 			logger.String("expected", "***"),
 			logger.String("provided", "***"))
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
+		return false
+	}
+
+	return true
+}
+
+func validateUIPassword(c *gin.Context, uiPassword string) bool {
+	_, pass, ok := c.Request.BasicAuth()
+	if !ok || pass == "" {
+		c.Header("WWW-Authenticate", `Basic realm="Kiro2API UI"`)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
+		return false
+	}
+
+	if subtle.ConstantTimeCompare([]byte(pass), []byte(uiPassword)) != 1 {
+		c.Header("WWW-Authenticate", `Basic realm="Kiro2API UI"`)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 		return false
 	}

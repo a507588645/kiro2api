@@ -47,6 +47,14 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	})
 	// 只对 /v1 开头的端点进行认证
 	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
+	uiPassword := strings.TrimSpace(os.Getenv("KIRO_UI_PASSWORD"))
+	if uiPassword != "" {
+		logger.Info("UI 认证已启用")
+	} else {
+		logger.Info("UI 认证未启用")
+	}
+	// 仅保护 Web UI 与管理端点
+	r.Use(UIAuthMiddleware(uiPassword, []string{"/static", "/oauth", "/api"}))
 
 	// 静态资源服务 - 前后端完全分离
 	r.Static("/static", "./static")
@@ -69,7 +77,7 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 		models := []types.Model{}
 		for anthropicModel := range config.ModelMap {
 			supportsThinking := converter.IsThinkingCompatibleModel(anthropicModel)
-			
+
 			// 添加原始模型
 			model := types.Model{
 				ID:               anthropicModel,
@@ -82,7 +90,7 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 				SupportsThinking: supportsThinking,
 			}
 			models = append(models, model)
-			
+
 			// 为支持 thinking 的模型添加 -thinking 后缀版本
 			if supportsThinking {
 				thinkingModel := types.Model{

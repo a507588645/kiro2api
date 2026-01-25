@@ -113,6 +113,9 @@ KIRO_CLIENT_TOKEN=your-secure-random-password
 # 必填：认证配置（JSON 或文件路径）
 KIRO_AUTH_TOKEN=./auth_config.json
 
+# 可选：Web 管理界面访问密码（Basic Auth）
+KIRO_UI_PASSWORD=your-ui-password
+
 # 可选：服务端口
 PORT=8080
 ```
@@ -279,6 +282,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 |------|--------|------|
 | `KIRO_CLIENT_TOKEN` | - | 客户端认证令牌（**必填**） |
 | `KIRO_AUTH_TOKEN` | - | 认证配置 JSON 或文件路径（**必填**） |
+| `KIRO_UI_PASSWORD` | - | Web 管理界面访问密码（Basic Auth，保护 `/`、`/static`、`/api`、`/oauth`） |
 | `PORT` | `8080` | 服务监听端口 |
 | `LOG_LEVEL` | `info` | 日志级别：debug, info, warn, error |
 | `GIN_MODE` | `release` | Gin 框架模式：debug, release, test |
