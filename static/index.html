@@ -73,6 +73,7 @@
                             <th>用户邮箱</th>
                             <th>Token预览</th>
                             <th>认证方式</th>
+                            <th>机器码</th>
                             <th>剩余次数</th>
                             <th>过期时间</th>
                             <th>最后使用</th>
@@ -82,13 +83,45 @@
                     </thead>
                     <tbody id="tokenTableBody">
                         <tr>
-                            <td colspan="9" class="loading">
+                            <td colspan="10" class="loading">
                                 <div class="spinner"></div>
                                 正在加载Token数据...
                             </td>
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Machine ID Dialog -->
+    <div id="machineIdDialog" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">机器码管理</h3>
+                <button class="modal-close" onclick="dashboard.closeMachineIdDialog()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-secondary); margin-bottom: var(--spacing-md); font-size: 0.875rem;">
+                    账号: <span id="machineIdEmail" style="color: var(--text-primary);"></span>
+                </p>
+                <div class="machine-id-input-group">
+                    <label class="machine-id-label">机器码 (UUID格式)</label>
+                    <input type="text" id="machineIdInput" class="machine-id-input"
+                           placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                    <div class="machine-id-actions">
+                        <button class="btn btn-secondary" onclick="dashboard.generateRandomMachineId()">
+                            随机生成
+                        </button>
+                        <button class="btn btn-secondary copy-btn" onclick="dashboard.copyMachineId()">
+                            复制
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="dashboard.closeMachineIdDialog()">取消</button>
+                <button class="btn btn-primary" onclick="dashboard.saveMachineId()">保存</button>
             </div>
         </div>
     </div>

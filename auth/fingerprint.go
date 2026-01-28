@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -49,9 +50,10 @@ type Fingerprint struct {
 
 // FingerprintManager 指纹管理器，每个token绑定固定指纹
 type FingerprintManager struct {
-	fingerprints map[string]*Fingerprint
-	mutex        sync.RWMutex
-	rng          *rand.Rand
+	fingerprints    map[string]*Fingerprint
+	emailMachineIds map[string]string // email -> machineId 绑定
+	mutex           sync.RWMutex
+	rng             *rand.Rand
 }
 
 var (
@@ -162,9 +164,12 @@ var cacheControlValues = []string{
 func GetFingerprintManager() *FingerprintManager {
 	fingerprintOnce.Do(func() {
 		globalFingerprintManager = &FingerprintManager{
-			fingerprints: make(map[string]*Fingerprint),
-			rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+			fingerprints:    make(map[string]*Fingerprint),
+			emailMachineIds: make(map[string]string),
+			rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 		}
+		// 加载已有的机器码绑定
+		globalFingerprintManager.loadMachineIdBindings()
 	})
 	return globalFingerprintManager
 }
@@ -387,4 +392,83 @@ func (fm *FingerprintManager) GetStats() map[string]any {
 		"screen_distribution": screenCounts,
 		"details":             fingerprintDetails,
 	}
+}
+
+// loadMachineIdBindings 从绑定管理器加载机器码绑定
+func (fm *FingerprintManager) loadMachineIdBindings() {
+	bindingManager := GetMachineIdBindingManager()
+	bindings := bindingManager.GetAllBindings()
+
+	fm.mutex.Lock()
+	defer fm.mutex.Unlock()
+
+	for email, binding := range bindings {
+		fm.emailMachineIds[email] = binding.MachineId
+	}
+}
+
+// SetMachineIdForEmail 为指定邮箱设置机器码
+func (fm *FingerprintManager) SetMachineIdForEmail(email, machineId string) {
+	fm.mutex.Lock()
+	defer fm.mutex.Unlock()
+	fm.emailMachineIds[email] = machineId
+}
+
+// RemoveMachineIdForEmail 移除指定邮箱的机器码绑定
+func (fm *FingerprintManager) RemoveMachineIdForEmail(email string) {
+	fm.mutex.Lock()
+	defer fm.mutex.Unlock()
+	delete(fm.emailMachineIds, email)
+}
+
+// GetMachineIdForEmail 获取指定邮箱绑定的机器码
+func (fm *FingerprintManager) GetMachineIdForEmail(email string) string {
+	fm.mutex.RLock()
+	defer fm.mutex.RUnlock()
+	return fm.emailMachineIds[email]
+}
+
+// GetFingerprintForEmail 获取指定邮箱对应的指纹（使用绑定的机器码）
+func (fm *FingerprintManager) GetFingerprintForEmail(email, tokenKey string) *Fingerprint {
+	fm.mutex.RLock()
+	machineId := fm.emailMachineIds[email]
+	fm.mutex.RUnlock()
+
+	// 如果有绑定的机器码，使用它来生成/获取指纹
+	if machineId != "" {
+		// 使用 email 作为 key 来保持指纹一致性
+		fpKey := "email:" + email
+		fm.mutex.RLock()
+		if fp, exists := fm.fingerprints[fpKey]; exists {
+			fm.mutex.RUnlock()
+			return fp
+		}
+		fm.mutex.RUnlock()
+
+		fm.mutex.Lock()
+		defer fm.mutex.Unlock()
+
+		// 双重检查
+		if fp, exists := fm.fingerprints[fpKey]; exists {
+			return fp
+		}
+
+		// 生成新指纹，使用绑定的机器码作为 KiroHash
+		fp := fm.generateFingerprint()
+		// 使用机器码的前64位作为 KiroHash（去掉连字符）
+		cleanMachineId := machineId
+		for _, c := range []string{"-"} {
+			cleanMachineId = strings.ReplaceAll(cleanMachineId, c, "")
+		}
+		// 确保长度为64位
+		if len(cleanMachineId) < 64 {
+			cleanMachineId = cleanMachineId + cleanMachineId
+		}
+		fp.KiroHash = cleanMachineId[:64]
+		fm.fingerprints[fpKey] = fp
+		return fp
+	}
+
+	// 没有绑定机器码，使用默认的 tokenKey 获取指纹
+	return fm.GetFingerprint(tokenKey)
 }

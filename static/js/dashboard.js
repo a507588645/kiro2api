@@ -8,11 +8,15 @@ class TokenDashboard {
         this.autoRefreshInterval = null;
         this.isAutoRefreshEnabled = false;
         this.apiBaseUrl = '/api';
-        
+
         // 批量删除功能 - 选择状态管理
         this.selectedTokens = new Set();  // 存储选中的 token ID
         this.deletableTokens = [];        // 可删除的 token 列表
-        
+
+        // 机器码绑定管理
+        this.machineIdBindings = {};      // email -> machineId 映射
+        this.currentMachineIdEmail = '';  // 当前编辑的账号邮箱
+
         this.init();
     }
 
@@ -21,6 +25,7 @@ class TokenDashboard {
      */
     init() {
         this.bindEvents();
+        this.loadMachineIds();
         this.refreshTokens();
     }
 
@@ -416,6 +421,7 @@ class TokenDashboard {
         const isDeletable = token.deletable === true;
         const tokenSource = token.source || 'unknown';
         const tokenId = token.oauth_id || '';
+        const userEmail = token.user_email || 'unknown';
 
         // 创建复选框列
         // Requirements: 1.2 - 在每行 Token 前显示单独的复选框
@@ -423,18 +429,22 @@ class TokenDashboard {
         // Requirements: 3.1, 3.2, 3.3 - 根据 deletable 属性设置复选框状态
         const checkboxCell = `
             <td class="checkbox-col">
-                <input type="checkbox" 
-                       class="token-checkbox" 
+                <input type="checkbox"
+                       class="token-checkbox"
                        data-token-id="${tokenId}"
                        onchange="dashboard.toggleTokenSelection('${tokenId}')"
                        ${!isDeletable ? 'disabled title="配置文件Token不可删除"' : ''}>
             </td>
         `;
 
+        // 创建机器码列
+        const machineId = this.machineIdBindings[userEmail] || '';
+        const machineIdCell = this.createMachineIdCell(userEmail, machineId);
+
         let deleteButton = '';
         if (isDeletable) {
             deleteButton = `
-                <button class="action-btn" title="删除" onclick="dashboard.deleteToken('${tokenId}', '${token.user_email || 'unknown'}', '${tokenSource}')">
+                <button class="action-btn" title="删除" onclick="dashboard.deleteToken('${tokenId}', '${userEmail}', '${tokenSource}')">
                     🗑️
                 </button>
             `;
@@ -449,9 +459,10 @@ class TokenDashboard {
         return `
             <tr>
                 ${checkboxCell}
-                <td>${token.user_email || 'unknown'}</td>
+                <td>${userEmail}</td>
                 <td><span class="token-preview">${token.token_preview || 'N/A'}</span></td>
                 <td>${token.auth_type || 'social'}</td>
+                ${machineIdCell}
                 <td>${token.remaining_usage || 0}</td>
                 <td>${this.formatDateTime(token.expires_at)}</td>
                 <td>${this.formatDateTime(token.last_used)}</td>
@@ -461,6 +472,35 @@ class TokenDashboard {
                 </td>
             </tr>
         `;
+    }
+
+    /**
+     * 创建机器码单元格
+     */
+    createMachineIdCell(email, machineId) {
+        if (machineId) {
+            // 已绑定：显示截断的机器码 + 编辑按钮
+            const preview = machineId.substring(0, 8) + '...';
+            return `
+                <td>
+                    <div class="machine-id-cell">
+                        <span class="machine-id-preview" title="${machineId}">${preview}</span>
+                        <button class="machine-id-btn bound" onclick="dashboard.showMachineIdDialog('${email}')" title="编辑机器码">
+                            编辑
+                        </button>
+                    </div>
+                </td>
+            `;
+        } else {
+            // 未绑定：显示绑定按钮
+            return `
+                <td>
+                    <button class="machine-id-btn unbound" onclick="dashboard.showMachineIdDialog('${email}')" title="绑定机器码">
+                        + 绑定
+                    </button>
+                </td>
+            `;
+        }
     }
 
     /**
@@ -571,7 +611,7 @@ class TokenDashboard {
     showLoading(container, message) {
         container.innerHTML = `
             <tr>
-                <td colspan="9" class="loading">
+                <td colspan="10" class="loading">
                     <div class="spinner"></div>
                     ${message}
                 </td>
@@ -582,11 +622,155 @@ class TokenDashboard {
     showError(container, message) {
         container.innerHTML = `
             <tr>
-                <td colspan="9">
+                <td colspan="10">
                     <div class="error-message">${message}</div>
                 </td>
             </tr>
         `;
+    }
+
+    // ==================== 机器码管理方法 ====================
+
+    /**
+     * 加载所有机器码绑定
+     */
+    async loadMachineIds() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/machine-ids`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            if (data.success && data.bindings) {
+                // 转换为 email -> machineId 映射
+                this.machineIdBindings = {};
+                data.bindings.forEach(binding => {
+                    this.machineIdBindings[binding.email] = binding.machine_id;
+                });
+            }
+        } catch (error) {
+            console.error('加载机器码绑定失败:', error);
+        }
+    }
+
+    /**
+     * 显示机器码管理对话框
+     */
+    showMachineIdDialog(email) {
+        this.currentMachineIdEmail = email;
+        const dialog = document.getElementById('machineIdDialog');
+        const emailSpan = document.getElementById('machineIdEmail');
+        const input = document.getElementById('machineIdInput');
+
+        emailSpan.textContent = email;
+        input.value = this.machineIdBindings[email] || '';
+
+        dialog.style.display = 'flex';
+    }
+
+    /**
+     * 关闭机器码管理对话框
+     */
+    closeMachineIdDialog() {
+        const dialog = document.getElementById('machineIdDialog');
+        dialog.style.display = 'none';
+        this.currentMachineIdEmail = '';
+    }
+
+    /**
+     * 生成随机机器码
+     */
+    generateRandomMachineId() {
+        // 生成 UUID v4 格式
+        const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+        document.getElementById('machineIdInput').value = uuid;
+    }
+
+    /**
+     * 复制机器码到剪贴板
+     */
+    async copyMachineId() {
+        const input = document.getElementById('machineIdInput');
+        const machineId = input.value;
+
+        if (!machineId) {
+            alert('没有可复制的机器码');
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(machineId);
+            // 显示复制成功提示
+            const copyBtn = document.querySelector('.modal-content .copy-btn');
+            if (copyBtn) {
+                const originalText = copyBtn.textContent;
+                copyBtn.textContent = '已复制';
+                copyBtn.classList.add('copied');
+                setTimeout(() => {
+                    copyBtn.textContent = originalText;
+                    copyBtn.classList.remove('copied');
+                }, 1500);
+            }
+        } catch (error) {
+            console.error('复制失败:', error);
+            alert('复制失败');
+        }
+    }
+
+    /**
+     * 保存机器码绑定
+     */
+    async saveMachineId() {
+        const email = this.currentMachineIdEmail;
+        const machineId = document.getElementById('machineIdInput').value.trim();
+
+        if (!email) {
+            alert('无效的账号');
+            return;
+        }
+
+        if (!machineId) {
+            alert('请输入或生成机器码');
+            return;
+        }
+
+        // 验证 UUID 格式
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(machineId)) {
+            alert('无效的机器码格式，请使用 UUID 格式');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(email)}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ machine_id: machineId })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // 更新本地缓存
+                this.machineIdBindings[email] = machineId;
+                // 关闭对话框
+                this.closeMachineIdDialog();
+                // 刷新表格
+                this.refreshTokens();
+                alert('机器码绑定成功');
+            } else {
+                alert('保存失败: ' + (data.message || '未知错误'));
+            }
+        } catch (error) {
+            console.error('保存机器码失败:', error);
+            alert('保存失败: ' + error.message);
+        }
     }
 }
 

@@ -65,6 +65,9 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	// 注册 OAuth 路由
 	RegisterOAuthRoutes(r)
 
+	// 注册机器码管理路由
+	RegisterMachineIdRoutes(r)
+
 	// API端点 - 纯数据服务
 	r.GET("/api/tokens", handleTokenPoolAPI)
 	r.GET("/api/anti-ban/status", handleAntiBanStatus)

@@ -1,0 +1,192 @@
+package server
+
+import (
+	"net/http"
+	"net/url"
+	"time"
+
+	"kiro2api/auth"
+	"kiro2api/logger"
+
+	"github.com/gin-gonic/gin"
+)
+
+// MachineIdBindingResponse 机器码绑定响应
+type MachineIdBindingResponse struct {
+	Email     string    `json:"email"`
+	MachineId string    `json:"machine_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// RegisterMachineIdRoutes 注册机器码管理路由
+func RegisterMachineIdRoutes(r *gin.Engine) {
+	r.GET("/api/machine-ids", handleGetAllMachineIds)
+	r.GET("/api/machine-ids/:email", handleGetMachineId)
+	r.PUT("/api/machine-ids/:email", handleSetMachineId)
+	r.DELETE("/api/machine-ids/:email", handleDeleteMachineId)
+	r.POST("/api/machine-ids/:email/generate", handleGenerateMachineId)
+
+	logger.Info("Machine ID routes registered")
+}
+
+// handleGetAllMachineIds 获取所有机器码绑定
+func handleGetAllMachineIds(c *gin.Context) {
+	manager := auth.GetMachineIdBindingManager()
+	bindings := manager.GetAllBindings()
+
+	result := make([]MachineIdBindingResponse, 0, len(bindings))
+	for email, binding := range bindings {
+		result = append(result, MachineIdBindingResponse{
+			Email:     email,
+			MachineId: binding.MachineId,
+			CreatedAt: binding.CreatedAt,
+			UpdatedAt: binding.UpdatedAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"bindings": result,
+		"count":    len(result),
+	})
+}
+
+// handleGetMachineId 获取指定账号的机器码
+func handleGetMachineId(c *gin.Context) {
+	email, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+		return
+	}
+
+	manager := auth.GetMachineIdBindingManager()
+	binding := manager.GetBinding(email)
+
+	if binding == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success":    true,
+			"email":      email,
+			"machine_id": "",
+			"bound":      false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"email":      email,
+		"machine_id": binding.MachineId,
+		"created_at": binding.CreatedAt,
+		"updated_at": binding.UpdatedAt,
+		"bound":      true,
+	})
+}
+
+// handleSetMachineId 设置/更新账号的机器码
+func handleSetMachineId(c *gin.Context) {
+	email, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+		return
+	}
+
+	var req struct {
+		MachineId string `json:"machine_id" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供机器码"})
+		return
+	}
+
+	// 验证机器码格式
+	if !auth.IsValidMachineId(req.MachineId) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的机器码格式，请使用UUID格式"})
+		return
+	}
+
+	manager := auth.GetMachineIdBindingManager()
+	if err := manager.SetBinding(email, req.MachineId); err != nil {
+		logger.Error("设置机器码失败", logger.Err(err), logger.String("email", email))
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存失败"})
+		return
+	}
+
+	// 更新指纹管理器中的绑定
+	fingerprintManager := auth.GetFingerprintManager()
+	fingerprintManager.SetMachineIdForEmail(email, req.MachineId)
+
+	logger.Info("机器码绑定成功",
+		logger.String("email", email),
+		logger.String("machine_id", req.MachineId[:8]+"..."))
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"message":    "机器码绑定成功",
+		"email":      email,
+		"machine_id": req.MachineId,
+	})
+}
+
+// handleDeleteMachineId 删除账号的机器码绑定
+func handleDeleteMachineId(c *gin.Context) {
+	email, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+		return
+	}
+
+	manager := auth.GetMachineIdBindingManager()
+	if err := manager.DeleteBinding(email); err != nil {
+		logger.Error("删除机器码绑定失败", logger.Err(err), logger.String("email", email))
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "删除失败"})
+		return
+	}
+
+	// 从指纹管理器中移除绑定
+	fingerprintManager := auth.GetFingerprintManager()
+	fingerprintManager.RemoveMachineIdForEmail(email)
+
+	logger.Info("机器码绑定删除成功", logger.String("email", email))
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "机器码绑定已删除",
+		"email":   email,
+	})
+}
+
+// handleGenerateMachineId 为账号生成随机机器码
+func handleGenerateMachineId(c *gin.Context) {
+	email, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+		return
+	}
+
+	// 生成随机机器码
+	machineId := auth.GenerateRandomMachineId()
+
+	manager := auth.GetMachineIdBindingManager()
+	if err := manager.SetBinding(email, machineId); err != nil {
+		logger.Error("生成机器码失败", logger.Err(err), logger.String("email", email))
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存失败"})
+		return
+	}
+
+	// 更新指纹管理器中的绑定
+	fingerprintManager := auth.GetFingerprintManager()
+	fingerprintManager.SetMachineIdForEmail(email, machineId)
+
+	logger.Info("随机机器码生成成功",
+		logger.String("email", email),
+		logger.String("machine_id", machineId[:8]+"..."))
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"message":    "随机机器码生成成功",
+		"email":      email,
+		"machine_id": machineId,
+	})
+}
