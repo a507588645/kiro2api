@@ -4,128 +4,171 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Token Dashboard - Kiro2API</title>
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/dashboard.css">
 </head>
-<body>
+<body class="neon-glass-theme">
     <div class="container">
         <!-- Header -->
-        <div class="header">
-            <div class="header-content">
-                <h1>🔐 KIRO Token Dashboard</h1>
+        <header class="header">
+            <div class="header-left">
+                <div class="logo-area">
+                    <h1>🔐 KIRO</h1>
+                    <span class="badge">Dashboard</span>
+                </div>
                 <p>实时监控Token池状态和使用情况</p>
             </div>
             
-            <div class="auto-refresh">
-                <span>自动刷新</span>
-                <div class="switch"></div>
+            <div class="header-right">
+                <div class="auto-refresh">
+                    <span>自动刷新</span>
+                    <div class="switch"></div>
+                </div>
+                
+                <div class="action-group">
+                    <a href="/oauth" class="btn btn-primary btn-sm">
+                        <i class="ri-add-line"></i> <span>添加</span>
+                    </a>
+                    <button class="btn btn-secondary btn-sm" id="importBtn">
+                        <i class="ri-upload-cloud-line"></i> <span>导入</span>
+                    </button>
+                    <input type="file" id="importFile" accept=".json" style="display: none;">
+                    
+                    <button class="btn btn-secondary btn-sm refresh-btn">
+                        <i class="ri-refresh-line"></i>
+                    </button>
+                </div>
             </div>
-        </div>
+        </header>
         
         <!-- Status Bar -->
         <div class="status-bar">
             <div class="status-card">
-                <span class="status-label">总Token数</span>
-                <span class="status-value" id="totalTokens">-</span>
+                <div class="status-icon"><i class="ri-database-2-line"></i></div>
+                <div class="status-info">
+                    <span class="status-label">总Token数</span>
+                    <span class="status-value" id="totalTokens">-</span>
+                </div>
+                <div class="status-glow"></div>
             </div>
             <div class="status-card">
-                <span class="status-label">可用Token</span>
-                <span class="status-value" id="activeTokens">-</span>
+                <div class="status-icon"><i class="ri-shield-check-line"></i></div>
+                <div class="status-info">
+                    <span class="status-label">可用Token</span>
+                    <span class="status-value" id="activeTokens">-</span>
+                </div>
+                <div class="status-glow success"></div>
             </div>
             <div class="status-card">
-                <span class="status-label">最后更新</span>
-                <span class="status-value" id="lastUpdate">-</span>
+                <div class="status-icon"><i class="ri-time-line"></i></div>
+                <div class="status-info">
+                    <span class="status-label">最后更新</span>
+                    <span class="status-value text-sm" id="lastUpdate">-</span>
+                </div>
             </div>
         </div>
         
-        <!-- Controls -->
-        <div class="controls">
-            <a href="/oauth" class="btn btn-primary">
-                <span>🔐</span> 添加账号授权
-            </a>
-            
-            <button class="btn btn-secondary" id="importBtn">
-                <span>📥</span> 导入账号
-            </button>
-            <input type="file" id="importFile" accept=".json" style="display: none;">
+        <!-- Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Main Content -->
+            <div class="main-content">
+                <!-- Batch Actions Bar (Floating or Static) -->
+                <div class="batch-actions-bar" id="batchActions" style="display: none;">
+                    <div class="batch-info">
+                        <i class="ri-checkbox-multiple-line"></i>
+                        <span class="selected-count">已选择 <span id="selectedCount">0</span> 项</span>
+                    </div>
+                    <div class="batch-btns">
+                        <button class="btn btn-secondary btn-xs" id="batchMachineIdBtn">
+                            <i class="ri-dice-line"></i> 随机机器码
+                        </button>
+                        <button class="btn btn-danger btn-xs btn-batch-delete" id="batchDeleteBtn">
+                            <i class="ri-delete-bin-line"></i> 删除
+                        </button>
+                    </div>
+                </div>
 
-            <button class="btn btn-secondary" id="batchMachineIdBtn">
-                <span>🎲</span> 批量随机机器码
-            </button>
-            
-            <button class="btn btn-secondary refresh-btn">
-                <span>🔄</span> 手动刷新
-            </button>
+                <div class="glass-card table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th class="checkbox-col">
+                                    <div class="custom-checkbox">
+                                        <input type="checkbox" id="selectAll">
+                                        <label for="selectAll"></label>
+                                    </div>
+                                </th>
+                                <th>用户邮箱</th>
+                                <th>Token预览</th>
+                                <th class="icon-header"><i class="ri-shield-key-line" title="认证/机器码"></i></th>
+                                <th>剩余</th>
+                                <th class="icon-header"><i class="ri-time-line" title="过期/最后使用"></i></th>
+                                <th>状态</th>
+                                <th class="text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tokenTableBody">
+                            <tr>
+                                <td colspan="8" class="loading">
+                                    <div class="spinner"></div>
+                                    正在加载Token数据...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
 
-            <!-- Batch Actions (Floating or Inline) -->
-            <div class="batch-actions" id="batchActions" style="display: none;">
-                <span class="selected-count">已选择 <span id="selectedCount">0</span> 个</span>
-                <button class="btn btn-danger btn-batch-delete" id="batchDeleteBtn">
-                    <span>🗑️</span> 批量删除
-                </button>
-            </div>
-        </div>
-        
-        <!-- Main Table Card -->
-        <div class="main-card">
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th class="checkbox-col">
-                                <input type="checkbox" id="selectAll">
-                            </th>
-                            <th>用户邮箱</th>
-                            <th>Token预览</th>
-                            <th>认证方式</th>
-                            <th>机器码</th>
-                            <th>剩余次数</th>
-                            <th>过期时间</th>
-                            <th>最后使用</th>
-                            <th>状态</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tokenTableBody">
-                        <tr>
-                            <td colspan="10" class="loading">
-                                <div class="spinner"></div>
-                                正在加载Token数据...
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+            <!-- Detail Drawer -->
+            <aside id="detailDrawer" class="detail-drawer">
+                <div class="drawer-header">
+                    <h3><i class="ri-file-list-3-line"></i> Token 详情</h3>
+                    <button class="drawer-close" onclick="dashboard.closeDrawer()">
+                        <i class="ri-close-line"></i>
+                    </button>
+                </div>
+                <div class="drawer-content" id="drawerContent">
+                    <div class="empty-state">
+                        <i class="ri-cursor-line"></i>
+                        <p>点击表格行查看详细信息</p>
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
     <!-- Machine ID Dialog -->
     <div id="machineIdDialog" class="modal-overlay" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content glass-card">
             <div class="modal-header">
-                <h3 class="modal-title">机器码管理</h3>
-                <button class="modal-close" onclick="dashboard.closeMachineIdDialog()">&times;</button>
+                <h3 class="modal-title"><i class="ri-cpu-line"></i> 机器码管理</h3>
+                <button class="modal-close" onclick="dashboard.closeMachineIdDialog()">
+                    <i class="ri-close-line"></i>
+                </button>
             </div>
             <div class="modal-body">
-                <p style="color: var(--text-secondary); margin-bottom: var(--spacing-md); font-size: 0.875rem;">
-                    账号: <span id="machineIdEmail" style="color: var(--text-primary);"></span>
-                </p>
-                <div class="machine-id-input-group">
-                    <label class="machine-id-label">机器码 (UUID或64位HEX)</label>
-                    <input type="text" id="machineIdInput" class="machine-id-input"
-                           placeholder="UUID 或 64 位 HEX">
-                    <div class="machine-id-actions">
-                        <button class="btn btn-secondary" onclick="dashboard.generateRandomMachineId()">
-                            随机生成
+                <div class="account-info">
+                    <span class="label">当前账号</span>
+                    <span id="machineIdEmail" class="value highlight-text"></span>
+                </div>
+                <div class="input-group-vertical">
+                    <label>机器码 (UUID / 64位 HEX)</label>
+                    <div class="input-with-action">
+                        <input type="text" id="machineIdInput" placeholder="输入或生成机器码">
+                        <button class="btn btn-icon" onclick="dashboard.copyMachineId()" title="复制">
+                            <i class="ri-file-copy-line"></i>
                         </button>
-                        <button class="btn btn-secondary copy-btn" onclick="dashboard.copyMachineId()">
-                            复制
+                    </div>
+                    <div class="quick-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="dashboard.generateRandomMachineId()">
+                            <i class="ri-magic-line"></i> 随机生成
                         </button>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="dashboard.closeMachineIdDialog()">取消</button>
-                <button class="btn btn-primary" onclick="dashboard.saveMachineId()">保存</button>
+                <button class="btn btn-ghost" onclick="dashboard.closeMachineIdDialog()">取消</button>
+                <button class="btn btn-primary" onclick="dashboard.saveMachineId()">保存更改</button>
             </div>
         </div>
     </div>

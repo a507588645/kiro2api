@@ -1,46 +1,58 @@
 /**
- * Token Dashboard - 前端控制器
- * 基于模块化设计，遵循单一职责原则
+ * Token Dashboard - Neon Glass Edition
+ * 
+ * 核心职责：
+ * 1. 数据获取与状态管理
+ * 2. DOM 渲染与交互 (Table, Drawer, Modals)
+ * 3. 动画与视觉反馈
  */
 
 class TokenDashboard {
     constructor() {
+        this.apiBaseUrl = '/api';
         this.autoRefreshInterval = null;
         this.isAutoRefreshEnabled = false;
-        this.apiBaseUrl = '/api';
-
-        // 批量删除功能 - 选择状态管理
-        this.selectedTokens = new Set();  // 存储选中的 token ID
-        this.deletableTokens = [];        // 可删除的 token 列表
-
-        // 机器码绑定管理
-        this.machineIdBindings = {};      // bindingKey -> machineId 映射
-        this.currentMachineIdEmail = '';  // 当前编辑的账号邮箱
-        this.currentMachineIdKey = '';    // 当前编辑的绑定Key
-        this.lastTokens = [];             // 缓存最近一次的token列表
+        
+        // State
+        this.tokens = [];
+        this.machineIdBindings = {};
+        this.selectedTokens = new Set();
+        this.activeToken = null; // 当前在 Drawer 中展示的 Token
+        
+        // UI References
+        this.ui = {
+            tableBody: document.getElementById('tokenTableBody'),
+            drawer: document.getElementById('detailDrawer'),
+            drawerContent: document.getElementById('drawerContent'),
+            grid: document.querySelector('.dashboard-grid'),
+            selectAll: document.getElementById('selectAll'),
+            batchActions: document.getElementById('batchActions'),
+            selectedCount: document.getElementById('selectedCount')
+        };
 
         this.init();
     }
 
-    /**
-     * 初始化Dashboard
-     */
     async init() {
-        this.bindEvents();
-        // 先加载机器码绑定，再刷新Token列表，确保数据关联正确
+        this.bindGlobalEvents();
         await this.loadMachineIds();
         await this.refreshTokens();
+        
+        // 恢复自动刷新状态（可选）
+        // this.startAutoRefresh();
     }
 
-    /**
-     * 绑定事件处理器 (DRY原则)
-     */
-    bindEvents() {
-        // 手动刷新按钮
-        const refreshBtn = document.querySelector('.refresh-btn');
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', () => this.refreshTokens());
-        }
+    // ============================================================
+    // 1. Event Binding
+    // ============================================================
+    bindGlobalEvents() {
+        // 刷新按钮
+        document.querySelectorAll('.refresh-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.animateRefresh(btn);
+                this.refreshTokens();
+            });
+        });
 
         // 自动刷新开关
         const switchEl = document.querySelector('.switch');
@@ -48,113 +60,292 @@ class TokenDashboard {
             switchEl.addEventListener('click', () => this.toggleAutoRefresh());
         }
 
-        // 导入按钮
-        const importBtn = document.getElementById('importBtn');
-        const importFile = document.getElementById('importFile');
-        if (importBtn && importFile) {
-            importBtn.addEventListener('click', () => this.showImportDialog());
-            importFile.addEventListener('change', (e) => {
-                if (e.target.files[0]) this.handleImport(e.target.files[0]);
-            });
+        // 全选
+        if (this.ui.selectAll) {
+            this.ui.selectAll.addEventListener('change', (e) => this.toggleSelectAll(e.target.checked));
         }
 
-        // 批量随机机器码
+        // 批量操作
+        const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+        if (batchDeleteBtn) {
+            batchDeleteBtn.addEventListener('click', () => this.batchDeleteTokens());
+        }
+        
         const batchMachineIdBtn = document.getElementById('batchMachineIdBtn');
         if (batchMachineIdBtn) {
             batchMachineIdBtn.addEventListener('click', () => this.batchGenerateMachineIds());
         }
 
-        // 全选复选框点击事件 - Requirements: 1.3
-        const selectAllCheckbox = document.getElementById('selectAll');
-        if (selectAllCheckbox) {
-            selectAllCheckbox.addEventListener('change', () => this.toggleSelectAll());
-        }
-
-        // 批量删除按钮点击事件 - Requirements: 2.3
-        const batchDeleteBtn = document.getElementById('batchDeleteBtn');
-        if (batchDeleteBtn) {
-            batchDeleteBtn.addEventListener('click', () => this.showBatchDeleteConfirm());
-        }
-    }
-
-    /**
-     * 触发文件选择
-     */
-    showImportDialog() {
-        document.getElementById('importFile').click();
-    }
-
-    /**
-     * 处理文件导入
-     */
-    async handleImport(file) {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/import-accounts`, {
-                method: 'POST',
-                body: formData
+        // 导入
+        const importBtn = document.getElementById('importBtn');
+        const importFile = document.getElementById('importFile');
+        if (importBtn && importFile) {
+            importBtn.addEventListener('click', () => importFile.click());
+            importFile.addEventListener('change', (e) => {
+                if (e.target.files[0]) this.handleImport(e.target.files[0]);
             });
-            const data = await response.json();
-            alert(data.message || (data.success ? '导入成功' : '导入失败'));
-            if (data.imported > 0) this.refreshTokens();
-        } catch (error) {
-            alert('导入失败: ' + error.message);
         }
-        document.getElementById('importFile').value = '';
     }
 
-    /**
-     * 删除Token凭证
-     */
-    async deleteToken(tokenId, userEmail, tokenSource = 'oauth') {
-        if (!tokenId) {
-            alert('无效的Token ID');
-            return;
+    animateRefresh(btn) {
+        const icon = btn.querySelector('i');
+        if (icon) {
+            icon.style.transition = 'transform 0.5s ease';
+            icon.style.transform = 'rotate(360deg)';
+            setTimeout(() => icon.style.transform = 'none', 500);
         }
+    }
 
-        // 确认删除
-        const sourceText = tokenSource === 'oauth' ? 'OAuth授权' : '手动配置';
-        const confirmed = confirm(`确定要删除用户 "${userEmail}" 的${sourceText}凭证吗？\n\n此操作不可撤销！`);
-        if (!confirmed) {
-            return;
-        }
-
+    // ============================================================
+    // 2. Data Fetching & Rendering
+    // ============================================================
+    async refreshTokens() {
         try {
-            let response;
-
-            if (tokenSource === 'oauth') {
-                // OAuth token删除
-                response = await fetch(`${this.apiBaseUrl}/oauth/tokens/${tokenId}`, {
-                    method: 'DELETE'
-                });
-            } else {
-                // 其他类型的token删除（暂时不支持）
-                alert('该类型的凭证需要通过修改配置文件删除');
-                return;
-            }
-
+            const response = await fetch(`${this.apiBaseUrl}/tokens`);
+            if (!response.ok) throw new Error('Failed to fetch tokens');
+            
             const data = await response.json();
-
-            if (data.success) {
-                alert('凭证删除成功');
-                // 刷新Token列表
-                this.refreshTokens();
-            } else {
-                alert('删除失败: ' + (data.message || '未知错误'));
+            this.tokens = data.tokens || [];
+            
+            this.renderTable();
+            this.updateStatusBar(data);
+            this.updateLastUpdateTime();
+            
+            // 如果 Drawer 打开且对应的 Token 还在列表中，更新 Drawer
+            if (this.activeToken) {
+                const updatedToken = this.tokens.find(t => this.getTokenId(t) === this.getTokenId(this.activeToken));
+                if (updatedToken) {
+                    this.activeToken = updatedToken;
+                    this.renderDrawerContent(updatedToken);
+                } else {
+                    this.closeDrawer();
+                }
             }
+            
+            // 更新选中状态（移除已不存在的 Token）
+            this.reconcileSelection();
+            
         } catch (error) {
-            console.error('删除Token失败:', error);
-            alert('删除失败: ' + error.message);
+            console.error('Refresh failed:', error);
+            this.ui.tableBody.innerHTML = `
+                <tr><td colspan="8" class="loading" style="color: var(--danger)">
+                    <i class="ri-error-warning-line"></i> 加载失败: ${error.message}
+                </td></tr>
+            `;
         }
     }
 
-    /**
-     * 切换单个 Token 的选中状态
-     * @param {string} tokenId - Token ID
-     * Requirements: 1.4
-     */
+    renderTable() {
+        if (this.tokens.length === 0) {
+            this.ui.tableBody.innerHTML = `
+                <tr><td colspan="8" class="loading">
+                    <i class="ri-inbox-line"></i> 暂无 Token 数据
+                </td></tr>
+            `;
+            return;
+        }
+
+        this.ui.tableBody.innerHTML = this.tokens.map((token, index) => {
+            const tokenId = this.getTokenId(token);
+            const isSelected = this.selectedTokens.has(tokenId);
+            const isActive = this.activeToken && this.getTokenId(this.activeToken) === tokenId;
+            
+            return `
+                <tr class="${isActive ? 'active-row' : ''}" onclick="dashboard.handleRowClick(event, '${tokenId}')">
+                    <td class="checkbox-col" onclick="event.stopPropagation()">
+                        <div class="custom-checkbox">
+                            <input type="checkbox" id="cb_${tokenId}" 
+                                   ${isSelected ? 'checked' : ''}
+                                   onchange="dashboard.toggleTokenSelection('${tokenId}')">
+                            <label for="cb_${tokenId}"></label>
+                        </div>
+                    </td>
+                    <td data-label="用户邮箱">
+                        <div style="font-weight: 500; color: var(--text-main)">${token.user_email || 'Unknown'}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-dim)">${token.auth_type || 'social'}</div>
+                    </td>
+                    <td data-label="Token预览">
+                        <span class="token-preview">${token.token_preview || 'N/A'}</span>
+                    </td>
+                    <td data-label="认证/机器码" class="icon-cell">
+                        ${this.renderMachineIdIcon(token)}
+                    </td>
+                    <td data-label="剩余次数">
+                        <span style="font-family: monospace; font-size: 1rem; font-weight: 600; color: ${this.getUsageColor(token)}">
+                            ${token.remaining_usage || 0}
+                        </span>
+                    </td>
+                    <td data-label="时间信息" class="icon-cell">
+                        <i class="ri-time-line" title="过期: ${this.formatDate(token.expires_at)}" style="cursor: help; opacity: 0.7"></i>
+                    </td>
+                    <td data-label="状态">
+                        ${this.renderStatusBadge(token)}
+                    </td>
+                    <td data-label="操作" class="text-right" onclick="event.stopPropagation()">
+                        <div class="action-btn-group">
+                            ${token.deletable ? `
+                                <button class="btn btn-icon" title="删除" onclick="dashboard.deleteToken('${token.oauth_id}', '${token.user_email}')">
+                                    <i class="ri-delete-bin-line" style="color: var(--danger)"></i>
+                                </button>
+                            ` : `
+                                <i class="ri-lock-line" title="配置文件锁定" style="padding: 6px; opacity: 0.5"></i>
+                            `}
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    renderMachineIdIcon(token) {
+        const bindingKey = token.binding_key;
+        const machineId = this.machineIdBindings[bindingKey];
+        
+        if (machineId) {
+            return `<i class="ri-shield-check-fill" style="color: var(--success)" title="已绑定: ${machineId}"></i>`;
+        } else {
+            return `<i class="ri-shield-line" style="color: var(--warning); opacity: 0.5" title="未绑定"></i>`;
+        }
+    }
+
+    renderStatusBadge(token) {
+        const now = new Date();
+        const expires = new Date(token.expires_at);
+        const remaining = token.remaining_usage || 0;
+        
+        let status = 'active';
+        let text = '正常';
+        
+        if (expires < now) {
+            status = 'expired';
+            text = '已过期';
+        } else if (remaining === 0) {
+            status = 'exhausted';
+            text = '已耗尽';
+        } else if (remaining <= 5) {
+            status = 'low';
+            text = '不足';
+        }
+        
+        return `
+            <span class="status-badge status-${status}">
+                <span class="status-dot"></span> ${text}
+            </span>
+        `;
+    }
+
+    getUsageColor(token) {
+        const remaining = token.remaining_usage || 0;
+        if (remaining === 0) return 'var(--text-dim)';
+        if (remaining <= 5) return 'var(--warning)';
+        return 'var(--success)';
+    }
+
+    // ============================================================
+    // 3. Drawer & Details
+    // ============================================================
+    handleRowClick(event, tokenId) {
+        // 如果点击的是 checkbox 或 button，不触发 Drawer
+        if (event.target.closest('input') || event.target.closest('button')) return;
+        
+        const token = this.tokens.find(t => this.getTokenId(t) === tokenId);
+        if (!token) return;
+
+        this.activeToken = token;
+        this.renderDrawerContent(token);
+        this.openDrawer();
+        
+        // 高亮当前行
+        document.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('active-row'));
+        event.currentTarget.classList.add('active-row');
+    }
+
+    openDrawer() {
+        this.ui.drawer.classList.add('is-open');
+        this.ui.grid.classList.add('drawer-open');
+    }
+
+    closeDrawer() {
+        this.ui.drawer.classList.remove('is-open');
+        this.ui.grid.classList.remove('drawer-open');
+        this.activeToken = null;
+        document.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('active-row'));
+    }
+
+    renderDrawerContent(token) {
+        const bindingKey = token.binding_key;
+        const machineId = this.machineIdBindings[bindingKey];
+        
+        this.ui.drawerContent.innerHTML = `
+            <div class="detail-section">
+                <h4>基本信息</h4>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">用户邮箱</span>
+                        <span class="info-value">${token.user_email}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">认证方式</span>
+                        <span class="info-value">${token.auth_type}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">OAuth ID</span>
+                        <span class="info-value" title="${token.oauth_id}">${this.truncate(token.oauth_id, 12)}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <h4>使用统计</h4>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">剩余次数</span>
+                        <span class="info-value" style="color: var(--primary)">${token.remaining_usage}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">过期时间</span>
+                        <span class="info-value">${this.formatDate(token.expires_at)}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">最后使用</span>
+                        <span class="info-value">${this.formatDate(token.last_used)}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <h4>设备绑定</h4>
+                <div class="glass-card" style="padding: 12px; margin-top: 8px; background: rgba(0,0,0,0.2)">
+                    <div style="margin-bottom: 8px; font-family: monospace; word-break: break-all; font-size: 0.8rem; color: var(--text-dim)">
+                        ${machineId || '未绑定机器码'}
+                    </div>
+                    <div style="display: flex; gap: 8px">
+                        <button class="btn btn-secondary btn-xs" onclick="dashboard.showMachineIdDialog('${this.escape(bindingKey)}', '${this.escape(token.user_email)}')">
+                            <i class="ri-edit-line"></i> ${machineId ? '修改' : '绑定'}
+                        </button>
+                        ${machineId ? `
+                            <button class="btn btn-ghost btn-xs" onclick="navigator.clipboard.writeText('${machineId}')">
+                                <i class="ri-file-copy-line"></i> 复制
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="detail-section">
+                <h4>原始数据</h4>
+                <pre style="font-size: 0.7rem; color: var(--text-dim); overflow: auto; max-height: 200px; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 8px;">${JSON.stringify(token, null, 2)}</pre>
+            </div>
+        `;
+    }
+
+    // ============================================================
+    // 4. Selection & Batch Actions
+    // ============================================================
+    getTokenId(token) {
+        return token.binding_key || token.oauth_id || 'unknown';
+    }
+
     toggleTokenSelection(tokenId) {
         if (this.selectedTokens.has(tokenId)) {
             this.selectedTokens.delete(tokenId);
@@ -164,751 +355,269 @@ class TokenDashboard {
         this.updateSelectionUI();
     }
 
-    /**
-     * 全选/取消全选所有可删除的 Token
-     * Requirements: 1.3
-     */
-    toggleSelectAll() {
-        // 获取所有可删除的 Token（deletableTokens 中 deletable=true 的）
-        const deletableIds = this.deletableTokens
-            .filter(token => token.deletable === true)
-            .map(token => token.tokenId);
-        
-        // 如果当前已全选（selectedTokens.size === 可删除数量），则清空选择
-        if (this.selectedTokens.size === deletableIds.length && deletableIds.length > 0) {
-            this.selectedTokens.clear();
-        } else {
-            // 否则，选中所有可删除的 Token
-            this.selectedTokens.clear();
-            deletableIds.forEach(id => this.selectedTokens.add(id));
+    toggleSelectAll(checked) {
+        this.selectedTokens.clear();
+        if (checked) {
+            this.tokens.forEach(token => {
+                if (token.deletable) {
+                    this.selectedTokens.add(this.getTokenId(token));
+                }
+            });
         }
         
-        // 调用 updateSelectionUI() 更新界面
-        this.updateSelectionUI();
-    }
-
-    /**
-     * 更新选择状态 UI
-     * - 更新全选复选框状态（选中/未选中/半选）
-     * - 更新批量删除按钮可见性和选中数量
-     * Requirements: 1.5, 2.1, 2.2
-     */
-    updateSelectionUI() {
-        // 1. 获取全选复选框元素
-        const selectAllCheckbox = document.getElementById('selectAll');
-        
-        // 2. 获取批量操作容器和选中数量显示
-        const batchActions = document.getElementById('batchActions');
-        const selectedCountEl = document.getElementById('selectedCount');
-        
-        // 3. 计算可删除 Token 数量和已选中数量
-        const deletableIds = this.deletableTokens
-            .filter(token => token.deletable === true)
-            .map(token => token.tokenId);
-        const deletableCount = deletableIds.length;
-        const selectedCount = this.selectedTokens.size;
-        
-        // 4. 更新全选复选框状态
-        if (selectAllCheckbox) {
-            if (selectedCount === 0) {
-                // 没有选中任何 Token：unchecked
-                selectAllCheckbox.checked = false;
-                selectAllCheckbox.indeterminate = false;
-            } else if (selectedCount === deletableCount && deletableCount > 0) {
-                // 全部选中：checked
-                selectAllCheckbox.checked = true;
-                selectAllCheckbox.indeterminate = false;
-            } else {
-                // 部分选中：indeterminate（半选）
-                selectAllCheckbox.checked = false;
-                selectAllCheckbox.indeterminate = true;
-            }
-        }
-        
-        // 5. 更新批量删除按钮可见性
-        if (batchActions) {
-            if (selectedCount > 0) {
-                batchActions.style.display = 'flex';
-            } else {
-                batchActions.style.display = 'none';
-            }
-        }
-        
-        // 6. 更新选中数量显示
-        if (selectedCountEl) {
-            selectedCountEl.textContent = selectedCount;
-        }
-        
-        // 7. 更新每行复选框的选中状态
-        const checkboxes = document.querySelectorAll('.token-checkbox');
-        checkboxes.forEach(checkbox => {
-            const tokenId = checkbox.dataset.tokenId;
-            if (tokenId) {
-                checkbox.checked = this.selectedTokens.has(tokenId);
+        // Update all checkboxes
+        document.querySelectorAll('.checkbox-col input[type="checkbox"]').forEach(cb => {
+            if (cb.id !== 'selectAll' && !cb.disabled) {
+                cb.checked = checked;
             }
         });
-    }
-
-    /**
-     * 批量删除选中的 Token
-     * - 调用批量删除 API
-     * - 处理响应，显示结果
-     * - 刷新列表，清除选中状态
-     * Requirements: 2.4, 2.5, 2.6, 5.1, 5.2, 5.3, 5.4
-     */
-    async batchDeleteTokens() {
-        // 1. 获取选中的 Token ID 数组
-        const tokenIds = Array.from(this.selectedTokens);
         
-        if (tokenIds.length === 0) {
-            alert('请先选择要删除的 Token');
-            return;
-        }
-        
-        // 2. 显示加载状态，禁用删除按钮
-        const batchDeleteBtn = document.getElementById('batchDeleteBtn');
-        const originalBtnText = batchDeleteBtn ? batchDeleteBtn.innerHTML : '';
-        
-        if (batchDeleteBtn) {
-            batchDeleteBtn.disabled = true;
-            batchDeleteBtn.innerHTML = '⏳ 删除中...';
-        }
-        
-        try {
-            // 3. 调用 POST /api/oauth/tokens/batch-delete API
-            const response = await fetch(`${this.apiBaseUrl}/oauth/tokens/batch-delete`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    token_ids: tokenIds
-                })
-            });
-            
-            const data = await response.json();
-            
-            // 4. 处理响应
-            if (response.ok && data.success) {
-                // 显示成功删除的数量
-                let message = `成功删除 ${data.deleted_count} 个 Token`;
-                
-                // 如果有失败的，显示失败数量和原因
-                if (data.failed_count > 0) {
-                    message += `\n${data.failed_count} 个删除失败`;
-                    
-                    // 收集失败原因
-                    const failedResults = data.results.filter(r => !r.success);
-                    if (failedResults.length > 0) {
-                        const failedReasons = failedResults
-                            .map(r => r.error || '未知错误')
-                            .filter((v, i, a) => a.indexOf(v) === i) // 去重
-                            .join(', ');
-                        message += `\n失败原因: ${failedReasons}`;
-                    }
-                }
-                
-                alert(message);
-            } else {
-                // API 返回错误
-                alert('批量删除失败: ' + (data.message || '未知错误'));
-            }
-        } catch (error) {
-            // 网络请求失败
-            console.error('批量删除 Token 失败:', error);
-            alert('批量删除失败: ' + error.message);
-        } finally {
-            // 5. 清除选中状态
-            this.selectedTokens.clear();
-            
-            // 6. 刷新 Token 列表
-            await this.refreshTokens();
-            
-            // 恢复按钮状态
-            if (batchDeleteBtn) {
-                batchDeleteBtn.disabled = false;
-                batchDeleteBtn.innerHTML = originalBtnText;
-            }
-            
-            // 更新选择 UI
-            this.updateSelectionUI();
-        }
-    }
-
-    /**
-     * 显示批量删除确认对话框
-     * - 显示将删除的 Token 数量
-     * - 用户确认后执行删除
-     * - 用户取消则不执行任何操作
-     * Requirements: 2.3
-     */
-    showBatchDeleteConfirm() {
-        // 1. 获取选中的 Token 数量
-        const selectedCount = this.selectedTokens.size;
-        
-        // 2. 如果没有选中任何 Token，提示用户
-        if (selectedCount === 0) {
-            alert('请先选择要删除的 Token');
-            return;
-        }
-        
-        // 3. 显示确认对话框，包含将删除的 Token 数量
-        const confirmed = confirm(
-            `确定要删除选中的 ${selectedCount} 个 Token 吗？\n\n此操作不可撤销！`
-        );
-        
-        // 4. 用户确认后调用 batchDeleteTokens() 方法
-        if (confirmed) {
-            this.batchDeleteTokens();
-        }
-        // 5. 用户取消则不执行任何操作（隐式返回）
-    }
-
-    /**
-     * 获取Token数据 - 简单直接 (KISS原则)
-     */
-    async refreshTokens() {
-        const tbody = document.getElementById('tokenTableBody');
-        this.showLoading(tbody, '正在刷新Token数据...');
-
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/tokens`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            this.updateTokenTable(data);
-            this.updateStatusBar(data);
-            this.updateLastUpdateTime();
-
-        } catch (error) {
-            console.error('刷新Token数据失败:', error);
-            this.showError(tbody, `加载失败: ${error.message}`);
-        }
-    }
-
-    /**
-     * 更新Token表格 (OCP原则 - 易于扩展新字段)
-     * Requirements: 1.2 - 渲染后更新 deletableTokens 列表并绑定复选框事件
-     */
-    updateTokenTable(data) {
-        const tbody = document.getElementById('tokenTableBody');
-        
-        if (!data.tokens || data.tokens.length === 0) {
-            this.showError(tbody, '暂无Token数据');
-            this.lastTokens = [];
-            // 清空 deletableTokens 列表
-            this.deletableTokens = [];
-            this.updateSelectionUI();
-            return;
-        }
-
-        const rows = data.tokens.map((token, index) => this.createTokenRow(token, index)).join('');
-        tbody.innerHTML = rows;
-        this.lastTokens = data.tokens;
-        
-        // 渲染后更新 deletableTokens 列表
-        // 使用统一的 tokenId 标识符：binding_key || oauth_id || index
-        this.deletableTokens = data.tokens.map((token, index) => ({
-            tokenId: token.binding_key || token.oauth_id || `index_${index}`,
-            oauth_id: token.oauth_id || '',
-            user_email: token.user_email || '',
-            deletable: token.deletable === true
-        }));
-        
-        // 渲染后调用 updateSelectionUI() 更新选择状态
         this.updateSelectionUI();
     }
 
-    /**
-     * 创建单个Token行 (SRP原则)
-     * Requirements: 1.2, 1.6, 3.1, 3.2, 3.3
-     */
-    createTokenRow(token, index) {
-        const statusClass = this.getStatusClass(token);
-        const statusText = this.getStatusText(token);
-
-        // 判断Token类型和是否可删除
-        const isDeletable = token.deletable === true;
-        const tokenSource = token.source || 'unknown';
-        // 使用统一的 tokenId 标识符：binding_key || oauth_id || index
-        const tokenId = token.binding_key || token.oauth_id || `index_${index}`;
-        const oauthId = token.oauth_id || '';
-        const userEmail = token.user_email || 'unknown';
-
-        // 创建复选框列
-        // Requirements: 1.2 - 在每行 Token 前显示单独的复选框
-        // Requirements: 1.6 - Token 不可删除时禁用复选框并显示提示
-        // Requirements: 3.1, 3.2, 3.3 - 根据 deletable 属性设置复选框状态
-        const checkboxCell = `
-            <td class="checkbox-col">
-                <input type="checkbox"
-                       class="token-checkbox"
-                       data-token-id="${tokenId}"
-                       onchange="dashboard.toggleTokenSelection('${tokenId}')"
-                       ${!isDeletable ? 'disabled title="配置文件Token不可删除"' : ''}>
-            </td>
-        `;
-
-        // 创建机器码列 - 直接使用后端返回的 binding_key
-        const bindingKey = token.binding_key || '';
-        const machineId = this.machineIdBindings[bindingKey] || '';
-        const machineIdCell = this.createMachineIdCell(bindingKey, userEmail, machineId) || '<td>-</td>';
-
-        let deleteButton = '';
-        if (isDeletable) {
-            deleteButton = `
-                <button class="action-btn" title="删除" onclick="dashboard.deleteToken('${oauthId}', '${userEmail}', '${tokenSource}')">
-                    🗑️
-                </button>
-            `;
-        } else {
-            deleteButton = `
-                <span class="status-badge status-exhausted" title="手动配置的Token需要通过修改配置文件删除">
-                    🔒 配置文件
-                </span>
-            `;
+    reconcileSelection() {
+        // Remove IDs that are no longer in the token list
+        const currentIds = new Set(this.tokens.map(t => this.getTokenId(t)));
+        for (const id of this.selectedTokens) {
+            if (!currentIds.has(id)) {
+                this.selectedTokens.delete(id);
+            }
         }
-
-        return `
-            <tr>
-                ${checkboxCell}
-                <td>${userEmail}</td>
-                <td><span class="token-preview">${token.token_preview || 'N/A'}</span></td>
-                <td>${token.auth_type || 'social'}</td>
-                ${machineIdCell}
-                <td>${token.remaining_usage || 0}</td>
-                <td>${this.formatDateTime(token.expires_at)}</td>
-                <td>${this.formatDateTime(token.last_used)}</td>
-                <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                <td>
-                    ${deleteButton}
-                </td>
-            </tr>
-        `;
+        this.updateSelectionUI();
     }
 
-    /**
-     * 创建机器码单元格
-     */
-    createMachineIdCell(bindingKey, email, machineId) {
-        if (!bindingKey) {
-            return '<td>-</td>';
-        }
-        const safeBindingKey = this.escapeJsString(bindingKey);
-        const safeEmail = this.escapeJsString(email);
-        if (machineId) {
-            // 已绑定：显示截断的机器码 + 编辑按钮
-            const preview = machineId.substring(0, 8) + '...';
-            return `
-                <td>
-                    <div class="machine-id-cell">
-                        <span class="machine-id-preview" title="${machineId}">${preview}</span>
-                        <button class="machine-id-btn bound" onclick="dashboard.showMachineIdDialog('${safeBindingKey}', '${safeEmail}')" title="编辑机器码">
-                            编辑
-                        </button>
-                    </div>
-                </td>
-            `;
+    updateSelectionUI() {
+        const count = this.selectedTokens.size;
+        this.ui.selectedCount.textContent = count;
+        
+        if (count > 0) {
+            this.ui.batchActions.style.display = 'flex';
         } else {
-            // 未绑定：显示绑定按钮
-            return `
-                <td>
-                    <button class="machine-id-btn unbound" onclick="dashboard.showMachineIdDialog('${safeBindingKey}', '${safeEmail}')" title="绑定机器码">
-                        + 绑定
-                    </button>
-                    <button class="machine-id-btn unbound" onclick="dashboard.generateMachineId('${safeBindingKey}')" title="随机绑定机器码">
-                        🎲 随机
-                    </button>
-                </td>
-            `;
+            this.ui.batchActions.style.display = 'none';
+        }
+        
+        // Update Select All Checkbox State
+        const deletableCount = this.tokens.filter(t => t.deletable).length;
+        if (this.ui.selectAll) {
+            this.ui.selectAll.checked = count > 0 && count === deletableCount;
+            this.ui.selectAll.indeterminate = count > 0 && count < deletableCount;
         }
     }
 
-    /**
-     * 更新状态栏 (SRP原则)
-     */
+    // ============================================================
+    // 5. Machine ID Management
+    // ============================================================
+    async loadMachineIds() {
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/machine-ids`);
+            const data = await res.json();
+            if (data.success) {
+                this.machineIdBindings = {};
+                data.bindings.forEach(b => {
+                    if (b.binding_key) this.machineIdBindings[b.binding_key] = b.machine_id;
+                });
+            }
+        } catch (e) {
+            console.error('Failed to load machine IDs', e);
+        }
+    }
+
+    showMachineIdDialog(bindingKey, email) {
+        this.currentMachineIdKey = bindingKey;
+        document.getElementById('machineIdEmail').textContent = email;
+        document.getElementById('machineIdInput').value = this.machineIdBindings[bindingKey] || '';
+        document.getElementById('machineIdDialog').style.display = 'flex';
+    }
+
+    closeMachineIdDialog() {
+        document.getElementById('machineIdDialog').style.display = 'none';
+        this.currentMachineIdKey = null;
+    }
+
+    async saveMachineId() {
+        const key = this.currentMachineIdKey;
+        const val = document.getElementById('machineIdInput').value.trim();
+        
+        if (!key) return;
+        
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(key)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ machine_id: val })
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                this.machineIdBindings[key] = val;
+                this.closeMachineIdDialog();
+                this.refreshTokens(); // Refresh UI
+                this.showToast('机器码保存成功', 'success');
+            } else {
+                alert(data.message || '保存失败');
+            }
+        } catch (e) {
+            alert('保存失败: ' + e.message);
+        }
+    }
+
+    generateRandomMachineId() {
+        const uuid = crypto.randomUUID();
+        document.getElementById('machineIdInput').value = uuid;
+    }
+    
+    async copyMachineId() {
+        const val = document.getElementById('machineIdInput').value;
+        if (val) {
+            await navigator.clipboard.writeText(val);
+            this.showToast('已复制到剪贴板');
+        }
+    }
+
+    // ============================================================
+    // 6. Actions (Delete, Import, etc.)
+    // ============================================================
+    async deleteToken(oauthId, email) {
+        if (!confirm(`确定要删除 ${email} 吗？`)) return;
+        
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/oauth/tokens/${oauthId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                this.showToast('删除成功', 'success');
+                this.refreshTokens();
+            } else {
+                alert(data.message);
+            }
+        } catch (e) {
+            alert('删除失败: ' + e.message);
+        }
+    }
+
+    async batchDeleteTokens() {
+        const ids = Array.from(this.selectedTokens);
+        if (ids.length === 0) return;
+        
+        if (!confirm(`确定要删除选中的 ${ids.length} 个 Token 吗？`)) return;
+        
+        // Note: The backend API for batch delete might need to be adjusted to accept binding_keys or oauth_ids
+        // Assuming here we filter tokens to get oauth_ids for the API
+        const oauthIds = this.tokens
+            .filter(t => ids.includes(this.getTokenId(t)) && t.oauth_id)
+            .map(t => t.oauth_id);
+
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/oauth/tokens/batch-delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token_ids: oauthIds }) // API expects 'token_ids' which are oauth_ids
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                this.showToast(`成功删除 ${data.deleted_count} 个 Token`, 'success');
+                this.selectedTokens.clear();
+                this.refreshTokens();
+            } else {
+                alert(data.message);
+            }
+        } catch (e) {
+            alert('批量删除失败: ' + e.message);
+        }
+    }
+
+    async handleImport(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/import-accounts`, { method: 'POST', body: formData });
+            const data = await res.json();
+            alert(data.message || (data.success ? '导入成功' : '导入失败'));
+            if (data.success) this.refreshTokens();
+        } catch (e) {
+            alert('导入失败: ' + e.message);
+        }
+        document.getElementById('importFile').value = '';
+    }
+
+    // ============================================================
+    // 7. Utilities
+    // ============================================================
     updateStatusBar(data) {
-        this.updateElement('totalTokens', data.total_tokens || 0);
-        this.updateElement('activeTokens', data.active_tokens || 0);
+        this.animateValue('totalTokens', data.total_tokens || 0);
+        this.animateValue('activeTokens', data.active_tokens || 0);
     }
 
-    /**
-     * 更新最后更新时间
-     */
     updateLastUpdateTime() {
         const now = new Date();
-        const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
-        this.updateElement('lastUpdate', timeStr);
+        document.getElementById('lastUpdate').textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
     }
 
-    /**
-     * 切换自动刷新 (ISP原则 - 接口隔离)
-     */
     toggleAutoRefresh() {
         const switchEl = document.querySelector('.switch');
-        
         if (this.isAutoRefreshEnabled) {
-            this.stopAutoRefresh();
+            clearInterval(this.autoRefreshInterval);
+            this.isAutoRefreshEnabled = false;
             switchEl.classList.remove('active');
         } else {
-            this.startAutoRefresh();
+            this.autoRefreshInterval = setInterval(() => this.refreshTokens(), 30000);
+            this.isAutoRefreshEnabled = true;
             switchEl.classList.add('active');
         }
     }
 
-    /**
-     * 启动自动刷新
-     */
-    startAutoRefresh() {
-        this.autoRefreshInterval = setInterval(() => this.refreshTokens(), 30000);
-        this.isAutoRefreshEnabled = true;
-    }
-
-    /**
-     * 停止自动刷新
-     */
-    stopAutoRefresh() {
-        if (this.autoRefreshInterval) {
-            clearInterval(this.autoRefreshInterval);
-            this.autoRefreshInterval = null;
-        }
-        this.isAutoRefreshEnabled = false;
-    }
-
-    /**
-     * 工具方法 - 状态判断 (KISS原则)
-     */
-    getStatusClass(token) {
-        if (new Date(token.expires_at) < new Date()) {
-            return 'status-expired';
-        }
-        const remaining = token.remaining_usage || 0;
-        if (remaining === 0) return 'status-exhausted';
-        if (remaining <= 5) return 'status-low';
-        return 'status-active';
-    }
-
-    getStatusText(token) {
-        if (new Date(token.expires_at) < new Date()) {
-            return '已过期';
-        }
-        const remaining = token.remaining_usage || 0;
-        if (remaining === 0) return '已耗尽';
-        if (remaining <= 5) return '即将耗尽';
-        return '正常';
-    }
-
-    /**
-     * 工具方法 - 日期格式化 (DRY原则)
-     */
-    formatDateTime(dateStr) {
-        if (!dateStr) return '-';
+    animateValue(id, end) {
+        const obj = document.getElementById(id);
+        if (!obj) return;
+        const start = parseInt(obj.textContent) || 0;
+        if (start === end) return;
         
-        try {
-            const date = new Date(dateStr);
-            if (isNaN(date.getTime())) return '-';
+        const duration = 1000;
+        const startTime = performance.now();
+        
+        const step = (currentTime) => {
+            const progress = Math.min((currentTime - startTime) / duration, 1);
+            // Ease out quart
+            const ease = 1 - Math.pow(1 - progress, 4);
             
-            return date.toLocaleString('zh-CN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            });
-        } catch (e) {
-            return '-';
-        }
-    }
-
-    /**
-     * UI工具方法 (KISS原则)
-     */
-    updateElement(id, content) {
-        const element = document.getElementById(id);
-        if (element) element.textContent = content;
-    }
-
-    showLoading(container, message) {
-        container.innerHTML = `
-            <tr>
-                <td colspan="10" class="loading">
-                    <div class="spinner"></div>
-                    ${message}
-                </td>
-            </tr>
-        `;
-    }
-
-    showError(container, message) {
-        container.innerHTML = `
-            <tr>
-                <td colspan="10">
-                    <div class="error-message">${message}</div>
-                </td>
-            </tr>
-        `;
-    }
-
-    // ==================== 机器码管理方法 ====================
-
-    /**
-     * 加载所有机器码绑定
-     */
-    async loadMachineIds() {
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/machine-ids`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const data = await response.json();
-            if (data.success && data.bindings) {
-                // 转换为 bindingKey -> machineId 映射
-                // 使用相同的 key 格式：直接使用 binding_key
-                this.machineIdBindings = {};
-                data.bindings.forEach(binding => {
-                    const key = binding.binding_key;
-                    if (key) {
-                        this.machineIdBindings[key] = binding.machine_id;
-                    }
-                });
-            }
-        } catch (error) {
-            console.error('加载机器码绑定失败:', error);
-        }
-    }
-
-    /**
-     * 显示机器码管理对话框
-     */
-    showMachineIdDialog(bindingKey, email) {
-        this.currentMachineIdKey = bindingKey || '';
-        this.currentMachineIdEmail = email || '';
-        const dialog = document.getElementById('machineIdDialog');
-        const emailSpan = document.getElementById('machineIdEmail');
-        const input = document.getElementById('machineIdInput');
-
-        emailSpan.textContent = email || bindingKey || '';
-        input.value = this.machineIdBindings[bindingKey] || '';
-
-        dialog.style.display = 'flex';
-    }
-
-    /**
-     * 关闭机器码管理对话框
-     */
-    closeMachineIdDialog() {
-        const dialog = document.getElementById('machineIdDialog');
-        dialog.style.display = 'none';
-        this.currentMachineIdEmail = '';
-        this.currentMachineIdKey = '';
-    }
-
-    /**
-     * 生成随机机器码
-     */
-    generateRandomMachineId() {
-        // 生成 UUID v4 格式
-        const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
-        document.getElementById('machineIdInput').value = uuid;
-    }
-
-    /**
-     * 直接为账号随机生成并绑定机器码
-     */
-    async generateMachineId(bindingKey) {
-        if (!bindingKey) {
-            alert('无效的账号');
-            return;
-        }
-
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}/generate`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-            if (data.success) {
-                this.machineIdBindings[bindingKey] = data.machine_id;
-                await this.refreshTokens();
-                alert('随机机器码生成成功');
+            obj.textContent = Math.floor(start + (end - start) * ease);
+            
+            if (progress < 1) {
+                requestAnimationFrame(step);
             } else {
-                alert('生成失败: ' + (data.message || '未知错误'));
+                obj.textContent = end;
             }
-        } catch (error) {
-            alert('生成失败: ' + error.message);
-        }
+        };
+        requestAnimationFrame(step);
     }
 
-    /**
-     * 批量随机生成机器码
-     * 如果有选中的账号，则只对选中的账号操作；否则对所有账号操作
-     */
-    async batchGenerateMachineIds() {
-        if (!this.lastTokens || this.lastTokens.length === 0) {
-            alert('暂无账号可操作');
-            return;
-        }
-
-        // 确定要操作的账号列表
-        let tokensToProcess = this.lastTokens;
-        let targetDesc = '所有账号';
-
-        // 如果有选中的账号，只对选中的账号操作
-        if (this.selectedTokens.size > 0) {
-            const selectedIds = Array.from(this.selectedTokens);
-            // 使用统一的标识符格式匹配：binding_key || oauth_id || index
-            tokensToProcess = this.lastTokens.filter((token, index) => {
-                const tokenId = token.binding_key || token.oauth_id || `index_${index}`;
-                return selectedIds.includes(tokenId);
-            });
-            targetDesc = `选中的 ${tokensToProcess.length} 个账号`;
-        }
-
-        if (tokensToProcess.length === 0) {
-            alert('没有可操作的账号');
-            return;
-        }
-
-        const proceed = confirm(`将为${targetDesc}生成随机机器码，是否继续？`);
-        if (!proceed) return;
-
-        const overwrite = confirm('是否覆盖已有绑定？\n确定=覆盖；取消=仅为未绑定账号生成');
-
-        let success = 0;
-        let failed = 0;
-        let skipped = 0;
-
-        for (const token of tokensToProcess) {
-            const bindingKey = token.binding_key || token.user_email || '';
-            if (!bindingKey) {
-                skipped++;
-                continue;
-            }
-            if (!overwrite && this.machineIdBindings[bindingKey]) {
-                skipped++;
-                continue;
-            }
-
-            try {
-                const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}/generate`, {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                if (data.success) {
-                    this.machineIdBindings[bindingKey] = data.machine_id;
-                    success++;
-                } else {
-                    failed++;
-                }
-            } catch (error) {
-                failed++;
-            }
-        }
-
-        await this.refreshTokens();
-        alert(`批量生成完成：成功 ${success}，跳过 ${skipped}，失败 ${failed}`);
-    }
-
-    /**
-     * 复制机器码到剪贴板
-     */
-    async copyMachineId() {
-        const input = document.getElementById('machineIdInput');
-        const machineId = input.value;
-
-        if (!machineId) {
-            alert('没有可复制的机器码');
-            return;
-        }
-
+    formatDate(str) {
+        if (!str) return '-';
         try {
-            await navigator.clipboard.writeText(machineId);
-            // 显示复制成功提示
-            const copyBtn = document.querySelector('.modal-content .copy-btn');
-            if (copyBtn) {
-                const originalText = copyBtn.textContent;
-                copyBtn.textContent = '已复制';
-                copyBtn.classList.add('copied');
-                setTimeout(() => {
-                    copyBtn.textContent = originalText;
-                    copyBtn.classList.remove('copied');
-                }, 1500);
-            }
-        } catch (error) {
-            console.error('复制失败:', error);
-            alert('复制失败');
-        }
-    }
-
-    escapeJsString(value) {
-        return String(value)
-            .replace(/\\/g, '\\\\')
-            .replace(/'/g, "\\'")
-            .replace(/\r/g, '\\r')
-            .replace(/\n/g, '\\n');
-    }
-
-    /**
-     * 保存机器码绑定
-     */
-    async saveMachineId() {
-        const bindingKey = this.currentMachineIdKey;
-        const machineId = document.getElementById('machineIdInput').value.trim();
-
-        if (!bindingKey) {
-            alert('无效的账号');
-            return;
-        }
-
-        if (!machineId) {
-            alert('请输入或生成机器码');
-            return;
-        }
-
-        // 验证 UUID 或 64位HEX 格式
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const hex64Regex = /^[0-9a-f]{64}$/i;
-        if (!uuidRegex.test(machineId) && !hex64Regex.test(machineId)) {
-            alert('无效的机器码格式，请使用 UUID 或 64 位 HEX 格式');
-            return;
-        }
-
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ machine_id: machineId })
+            return new Date(str).toLocaleString('zh-CN', {
+                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
             });
+        } catch { return '-'; }
+    }
 
-            const data = await response.json();
+    truncate(str, len) {
+        if (!str) return '';
+        return str.length > len ? str.substring(0, len) + '...' : str;
+    }
 
-            if (data.success) {
-                // 更新本地缓存
-                this.machineIdBindings[bindingKey] = machineId;
-                // 关闭对话框
-                this.closeMachineIdDialog();
-                // 刷新表格
-                this.refreshTokens();
-                alert('机器码绑定成功');
-            } else {
-                alert('保存失败: ' + (data.message || '未知错误'));
-            }
-        } catch (error) {
-            console.error('保存机器码失败:', error);
-            alert('保存失败: ' + error.message);
-        }
+    escape(str) {
+        return String(str).replace(/'/g, "\\'").replace(/"/g, '"');
+    }
+
+    showToast(msg, type = 'info') {
+        // Simple alert for now, could be a nice toast UI
+        // alert(msg);
+        console.log(`[${type.toUpperCase()}] ${msg}`);
     }
 }
 
-// DOM加载完成后初始化 (依赖注入原则)
+// Initialize
 let dashboard;
 document.addEventListener('DOMContentLoaded', () => {
     dashboard = new TokenDashboard();
