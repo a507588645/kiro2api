@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"kiro2api/logger"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -41,10 +42,22 @@ var (
 // GetMachineIdBindingManager 获取全局机器码绑定管理器
 func GetMachineIdBindingManager() *MachineIdBindingManager {
 	machineIdBindingOnce.Do(func() {
+		filePath := os.Getenv("MACHINE_ID_BINDING_FILE")
+		if filePath == "" {
+			// 如果设置了OAUTH_TOKEN_FILE，使用相同目录
+			oauthFile := os.Getenv("OAUTH_TOKEN_FILE")
+			if oauthFile != "" {
+				dir := filepath.Dir(oauthFile)
+				filePath = filepath.Join(dir, "machine_id_bindings.json")
+			} else {
+				filePath = "machine_id_bindings.json"
+			}
+		}
 		globalMachineIdBindingManager = &MachineIdBindingManager{
 			bindings: make(map[string]*MachineIdBinding),
-			filePath: "machine_id_bindings.json",
+			filePath: filePath,
 		}
+		logger.Info("机器码绑定文件路径", logger.String("path", filePath))
 		// 启动时加载已有绑定
 		if err := globalMachineIdBindingManager.LoadFromFile(); err != nil {
 			logger.Warn("加载机器码绑定失败，将使用空绑定", logger.Err(err))
