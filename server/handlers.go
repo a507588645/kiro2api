@@ -440,6 +440,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 
 	// 遍历所有配置
 	for i, authConfig := range configs {
+		bindingKey := auth.BuildMachineIdBindingKey(authConfig)
 		// 检查配置是否被禁用
 		if authConfig.Disabled {
 			tokenData := map[string]any{
@@ -452,6 +453,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"last_used":       "未知",
 				"status":          "disabled",
 				"error":           "配置已禁用",
+				"binding_key":     bindingKey,
 				// 删除相关字段
 				"source":          authConfig.Source,
 				"oauth_id":        authConfig.OAuthID,
@@ -474,6 +476,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"last_used":       "未知",
 				"status":          "error",
 				"error":           err.Error(),
+				"binding_key":     bindingKey,
 				// 删除相关字段
 				"source":          authConfig.Source,
 				"oauth_id":        authConfig.OAuthID,
@@ -509,6 +512,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 			"expires_at":      tokenInfo.ExpiresAt.Format(time.RFC3339),
 			"last_used":       time.Now().Format(time.RFC3339),
 			"status":          "active",
+			"binding_key":     bindingKey,
 			// 删除相关字段
 			"source":          authConfig.Source,
 			"oauth_id":        authConfig.OAuthID,

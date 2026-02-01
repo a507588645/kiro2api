@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"kiro2api/logger"
 	"os"
@@ -26,7 +28,7 @@ type MachineIdBindingData struct {
 
 // MachineIdBindingManager 机器码绑定管理器
 type MachineIdBindingManager struct {
-	bindings map[string]*MachineIdBinding // email -> binding
+	bindings map[string]*MachineIdBinding // bindingKey -> binding
 	mutex    sync.RWMutex
 	filePath string
 }
@@ -55,7 +57,14 @@ func GetMachineIdBindingManager() *MachineIdBindingManager {
 func (m *MachineIdBindingManager) GetBinding(email string) *MachineIdBinding {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-	return m.bindings[email]
+	key := NormalizeBindingKey(email)
+	if key == "" {
+		return nil
+	}
+	if binding, exists := m.bindings[key]; exists {
+		return binding
+	}
+	return nil
 }
 
 // GetMachineId 获取账号绑定的机器码字符串，不存在返回空字符串
@@ -72,12 +81,17 @@ func (m *MachineIdBindingManager) SetBinding(email, machineId string) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
+	key := NormalizeBindingKey(email)
+	if key == "" {
+		return nil
+	}
+
 	now := time.Now()
-	if existing, exists := m.bindings[email]; exists {
+	if existing, exists := m.bindings[key]; exists {
 		existing.MachineId = machineId
 		existing.UpdatedAt = now
 	} else {
-		m.bindings[email] = &MachineIdBinding{
+		m.bindings[key] = &MachineIdBinding{
 			MachineId: machineId,
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -93,7 +107,10 @@ func (m *MachineIdBindingManager) DeleteBinding(email string) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	delete(m.bindings, email)
+	key := NormalizeBindingKey(email)
+	if key != "" {
+		delete(m.bindings, key)
+	}
 	return m.saveToFileUnlocked()
 }
 
@@ -121,6 +138,12 @@ func GenerateRandomMachineId() string {
 
 var hex64Regex = regexp.MustCompile("^[0-9a-fA-F]{64}$")
 
+const (
+	bindingKeyEmailPrefix   = "email:"
+	bindingKeyOAuthPrefix   = "oauth:"
+	bindingKeyRefreshPrefix = "refresh:"
+)
+
 // NormalizeMachineId 标准化机器码格式（UUID 或 64位HEX）
 // 返回标准化字符串及是否有效
 func NormalizeMachineId(machineId string) (string, bool) {
@@ -138,6 +161,30 @@ func NormalizeMachineId(machineId string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// NormalizeBindingKey 标准化绑定key（无前缀视为email）
+func NormalizeBindingKey(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, ":") {
+		return trimmed
+	}
+	return bindingKeyEmailPrefix + trimmed
+}
+
+// BuildMachineIdBindingKey 基于AuthConfig生成绑定key
+func BuildMachineIdBindingKey(authConfig AuthConfig) string {
+	if authConfig.OAuthID != "" {
+		return bindingKeyOAuthPrefix + authConfig.OAuthID
+	}
+	if authConfig.RefreshToken != "" {
+		hash := sha256.Sum256([]byte(authConfig.RefreshToken))
+		return bindingKeyRefreshPrefix + hex.EncodeToString(hash[:])
+	}
+	return ""
 }
 
 // LoadFromFile 从文件加载绑定数据
@@ -160,7 +207,15 @@ func (m *MachineIdBindingManager) LoadFromFile() error {
 	}
 
 	if bindingData.Bindings != nil {
-		m.bindings = bindingData.Bindings
+		normalized := make(map[string]*MachineIdBinding)
+		for key, binding := range bindingData.Bindings {
+			normalizedKey := NormalizeBindingKey(key)
+			if normalizedKey == "" {
+				continue
+			}
+			normalized[normalizedKey] = binding
+		}
+		m.bindings = normalized
 	}
 
 	logger.Info("加载机器码绑定成功", logger.Int("count", len(m.bindings)))

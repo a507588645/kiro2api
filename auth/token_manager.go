@@ -6,6 +6,8 @@ import (
 	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -274,12 +276,9 @@ func (tm *TokenManager) GetTokenWithFingerprint() (types.TokenInfo, *Fingerprint
 	// 获取指纹
 	var fingerprint *Fingerprint
 	if tm.fingerprintManager != nil {
-		email := ""
-		if bestToken.UsageInfo != nil {
-			email = bestToken.UsageInfo.UserInfo.Email
-		}
-		if email != "" {
-			fingerprint = tm.fingerprintManager.GetFingerprintForEmail(email, tokenKey)
+		bindingKey := tm.getBindingKeyForToken(tokenKey, bestToken)
+		if bindingKey != "" {
+			fingerprint = tm.fingerprintManager.GetFingerprintForBindingKey(bindingKey, tokenKey)
 		} else {
 			fingerprint = tm.fingerprintManager.GetFingerprint(tokenKey)
 		}
@@ -349,12 +348,9 @@ func (tm *TokenManager) GetTokenWithFingerprintForSession(sessionID string) (typ
 	// 获取指纹
 	var fingerprint *Fingerprint
 	if tm.fingerprintManager != nil {
-		email := ""
-		if bestToken.UsageInfo != nil {
-			email = bestToken.UsageInfo.UserInfo.Email
-		}
-		if email != "" {
-			fingerprint = tm.fingerprintManager.GetFingerprintForEmail(email, tokenKey)
+		bindingKey := tm.getBindingKeyForToken(tokenKey, bestToken)
+		if bindingKey != "" {
+			fingerprint = tm.fingerprintManager.GetFingerprintForBindingKey(bindingKey, tokenKey)
 		} else {
 			fingerprint = tm.fingerprintManager.GetFingerprint(tokenKey)
 		}
@@ -410,6 +406,42 @@ func (tm *TokenManager) GetCurrentTokenKey() string {
 		return ""
 	}
 	return tm.configOrder[tm.currentIndex]
+}
+
+func (tm *TokenManager) getAuthConfigByTokenKey(tokenKey string) (AuthConfig, bool) {
+	if !strings.HasPrefix(tokenKey, "token_") {
+		return AuthConfig{}, false
+	}
+	indexStr := strings.TrimPrefix(tokenKey, "token_")
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		return AuthConfig{}, false
+	}
+
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+	if index < 0 || index >= len(tm.configs) {
+		return AuthConfig{}, false
+	}
+	return tm.configs[index], true
+}
+
+func (tm *TokenManager) getBindingKeyForToken(tokenKey string, cached *CachedToken) string {
+	if cfg, ok := tm.getAuthConfigByTokenKey(tokenKey); ok {
+		bindingKey := BuildMachineIdBindingKey(cfg)
+		if bindingKey != "" {
+			return bindingKey
+		}
+	}
+
+	if cached != nil && cached.UsageInfo != nil {
+		email := cached.UsageInfo.UserInfo.Email
+		if email != "" {
+			return NormalizeBindingKey(email)
+		}
+	}
+
+	return ""
 }
 
 // advanceToNextToken 前进到下一个token（内部方法，调用者必须持有锁）

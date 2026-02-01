@@ -14,8 +14,9 @@ class TokenDashboard {
         this.deletableTokens = [];        // 可删除的 token 列表
 
         // 机器码绑定管理
-        this.machineIdBindings = {};      // email -> machineId 映射
+        this.machineIdBindings = {};      // bindingKey -> machineId 映射
         this.currentMachineIdEmail = '';  // 当前编辑的账号邮箱
+        this.currentMachineIdKey = '';    // 当前编辑的绑定Key
 
         this.init();
     }
@@ -438,8 +439,9 @@ class TokenDashboard {
         `;
 
         // 创建机器码列
-        const machineId = this.machineIdBindings[userEmail] || '';
-        const machineIdCell = this.createMachineIdCell(userEmail, machineId);
+        const bindingKey = token.binding_key || userEmail || '';
+        const machineId = this.machineIdBindings[bindingKey] || '';
+        const machineIdCell = this.createMachineIdCell(bindingKey, userEmail, machineId);
 
         let deleteButton = '';
         if (isDeletable) {
@@ -477,7 +479,7 @@ class TokenDashboard {
     /**
      * 创建机器码单元格
      */
-    createMachineIdCell(email, machineId) {
+    createMachineIdCell(bindingKey, email, machineId) {
         if (machineId) {
             // 已绑定：显示截断的机器码 + 编辑按钮
             const preview = machineId.substring(0, 8) + '...';
@@ -485,7 +487,7 @@ class TokenDashboard {
                 <td>
                     <div class="machine-id-cell">
                         <span class="machine-id-preview" title="${machineId}">${preview}</span>
-                        <button class="machine-id-btn bound" onclick="dashboard.showMachineIdDialog('${email}')" title="编辑机器码">
+                        <button class="machine-id-btn bound" onclick="dashboard.showMachineIdDialog('${bindingKey}', '${email}')" title="编辑机器码">
                             编辑
                         </button>
                     </div>
@@ -495,7 +497,7 @@ class TokenDashboard {
             // 未绑定：显示绑定按钮
             return `
                 <td>
-                    <button class="machine-id-btn unbound" onclick="dashboard.showMachineIdDialog('${email}')" title="绑定机器码">
+                    <button class="machine-id-btn unbound" onclick="dashboard.showMachineIdDialog('${bindingKey}', '${email}')" title="绑定机器码">
                         + 绑定
                     </button>
                 </td>
@@ -642,10 +644,13 @@ class TokenDashboard {
             }
             const data = await response.json();
             if (data.success && data.bindings) {
-                // 转换为 email -> machineId 映射
+                // 转换为 bindingKey -> machineId 映射
                 this.machineIdBindings = {};
                 data.bindings.forEach(binding => {
-                    this.machineIdBindings[binding.email] = binding.machine_id;
+                    const key = binding.binding_key || binding.email || '';
+                    if (key) {
+                        this.machineIdBindings[key] = binding.machine_id;
+                    }
                 });
             }
         } catch (error) {
@@ -656,14 +661,15 @@ class TokenDashboard {
     /**
      * 显示机器码管理对话框
      */
-    showMachineIdDialog(email) {
-        this.currentMachineIdEmail = email;
+    showMachineIdDialog(bindingKey, email) {
+        this.currentMachineIdKey = bindingKey || '';
+        this.currentMachineIdEmail = email || '';
         const dialog = document.getElementById('machineIdDialog');
         const emailSpan = document.getElementById('machineIdEmail');
         const input = document.getElementById('machineIdInput');
 
-        emailSpan.textContent = email;
-        input.value = this.machineIdBindings[email] || '';
+        emailSpan.textContent = email || bindingKey || '';
+        input.value = this.machineIdBindings[bindingKey] || '';
 
         dialog.style.display = 'flex';
     }
@@ -675,6 +681,7 @@ class TokenDashboard {
         const dialog = document.getElementById('machineIdDialog');
         dialog.style.display = 'none';
         this.currentMachineIdEmail = '';
+        this.currentMachineIdKey = '';
     }
 
     /**
@@ -725,10 +732,10 @@ class TokenDashboard {
      * 保存机器码绑定
      */
     async saveMachineId() {
-        const email = this.currentMachineIdEmail;
+        const bindingKey = this.currentMachineIdKey;
         const machineId = document.getElementById('machineIdInput').value.trim();
 
-        if (!email) {
+        if (!bindingKey) {
             alert('无效的账号');
             return;
         }
@@ -747,7 +754,7 @@ class TokenDashboard {
         }
 
         try {
-            const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(email)}`, {
+            const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json'
@@ -759,7 +766,7 @@ class TokenDashboard {
 
             if (data.success) {
                 // 更新本地缓存
-                this.machineIdBindings[email] = machineId;
+                this.machineIdBindings[bindingKey] = machineId;
                 // 关闭对话框
                 this.closeMachineIdDialog();
                 // 刷新表格

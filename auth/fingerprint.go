@@ -51,7 +51,7 @@ type Fingerprint struct {
 // FingerprintManager 指纹管理器，每个token绑定固定指纹
 type FingerprintManager struct {
 	fingerprints    map[string]*Fingerprint
-	emailMachineIds map[string]string // email -> machineId 绑定
+	bindingMachineIds map[string]string // bindingKey -> machineId 绑定
 	mutex           sync.RWMutex
 	rng             *rand.Rand
 }
@@ -164,9 +164,9 @@ var cacheControlValues = []string{
 func GetFingerprintManager() *FingerprintManager {
 	fingerprintOnce.Do(func() {
 		globalFingerprintManager = &FingerprintManager{
-			fingerprints:    make(map[string]*Fingerprint),
-			emailMachineIds: make(map[string]string),
-			rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+			fingerprints:     make(map[string]*Fingerprint),
+			bindingMachineIds: make(map[string]string),
+			rng:              rand.New(rand.NewSource(time.Now().UnixNano())),
 		}
 		// 加载已有的机器码绑定
 		globalFingerprintManager.loadMachineIdBindings()
@@ -402,48 +402,57 @@ func (fm *FingerprintManager) loadMachineIdBindings() {
 	fm.mutex.Lock()
 	defer fm.mutex.Unlock()
 
-	for email, binding := range bindings {
-		fm.emailMachineIds[email] = binding.MachineId
+	for key, binding := range bindings {
+		fm.bindingMachineIds[key] = binding.MachineId
 	}
 }
 
-// SetMachineIdForEmail 为指定邮箱设置机器码
-func (fm *FingerprintManager) SetMachineIdForEmail(email, machineId string) {
+// SetMachineIdForBindingKey 为指定绑定key设置机器码
+func (fm *FingerprintManager) SetMachineIdForBindingKey(bindingKey, machineId string) {
 	fm.mutex.Lock()
 	defer fm.mutex.Unlock()
-	fm.emailMachineIds[email] = machineId
-	// 如果已缓存该邮箱的指纹，清除以便使用新机器码
-	fpKey := "email:" + email
+	if bindingKey == "" {
+		return
+	}
+	fm.bindingMachineIds[bindingKey] = machineId
+	// 清除缓存的指纹，确保使用新机器码
+	fpKey := "binding:" + bindingKey
 	delete(fm.fingerprints, fpKey)
 }
 
-// RemoveMachineIdForEmail 移除指定邮箱的机器码绑定
-func (fm *FingerprintManager) RemoveMachineIdForEmail(email string) {
+// RemoveMachineIdForBindingKey 移除指定绑定key的机器码绑定
+func (fm *FingerprintManager) RemoveMachineIdForBindingKey(bindingKey string) {
 	fm.mutex.Lock()
 	defer fm.mutex.Unlock()
-	delete(fm.emailMachineIds, email)
-	// 清除邮箱指纹缓存
-	fpKey := "email:" + email
+	if bindingKey == "" {
+		return
+	}
+	delete(fm.bindingMachineIds, bindingKey)
+	// 清除缓存的指纹
+	fpKey := "binding:" + bindingKey
 	delete(fm.fingerprints, fpKey)
 }
 
-// GetMachineIdForEmail 获取指定邮箱绑定的机器码
-func (fm *FingerprintManager) GetMachineIdForEmail(email string) string {
+// GetMachineIdForBindingKey 获取指定绑定key的机器码
+func (fm *FingerprintManager) GetMachineIdForBindingKey(bindingKey string) string {
 	fm.mutex.RLock()
 	defer fm.mutex.RUnlock()
-	return fm.emailMachineIds[email]
+	if bindingKey == "" {
+		return ""
+	}
+	return fm.bindingMachineIds[bindingKey]
 }
 
-// GetFingerprintForEmail 获取指定邮箱对应的指纹（使用绑定的机器码）
-func (fm *FingerprintManager) GetFingerprintForEmail(email, tokenKey string) *Fingerprint {
+// GetFingerprintForBindingKey 获取指定绑定key对应的指纹（使用绑定的机器码）
+func (fm *FingerprintManager) GetFingerprintForBindingKey(bindingKey, tokenKey string) *Fingerprint {
 	fm.mutex.RLock()
-	machineId := fm.emailMachineIds[email]
+	machineId := fm.bindingMachineIds[bindingKey]
 	fm.mutex.RUnlock()
 
 	// 如果有绑定的机器码，使用它来生成/获取指纹
 	if machineId != "" {
-		// 使用 email 作为 key 来保持指纹一致性
-		fpKey := "email:" + email
+		// 使用 bindingKey 作为 key 来保持指纹一致性
+		fpKey := "binding:" + bindingKey
 		fm.mutex.RLock()
 		if fp, exists := fm.fingerprints[fpKey]; exists {
 			fm.mutex.RUnlock()
@@ -478,4 +487,28 @@ func (fm *FingerprintManager) GetFingerprintForEmail(email, tokenKey string) *Fi
 
 	// 没有绑定机器码，使用默认的 tokenKey 获取指纹
 	return fm.GetFingerprint(tokenKey)
+}
+
+// SetMachineIdForEmail 为指定邮箱设置机器码（兼容旧接口）
+func (fm *FingerprintManager) SetMachineIdForEmail(email, machineId string) {
+	key := NormalizeBindingKey(email)
+	fm.SetMachineIdForBindingKey(key, machineId)
+}
+
+// RemoveMachineIdForEmail 移除指定邮箱的机器码绑定（兼容旧接口）
+func (fm *FingerprintManager) RemoveMachineIdForEmail(email string) {
+	key := NormalizeBindingKey(email)
+	fm.RemoveMachineIdForBindingKey(key)
+}
+
+// GetMachineIdForEmail 获取指定邮箱绑定的机器码（兼容旧接口）
+func (fm *FingerprintManager) GetMachineIdForEmail(email string) string {
+	key := NormalizeBindingKey(email)
+	return fm.GetMachineIdForBindingKey(key)
+}
+
+// GetFingerprintForEmail 获取指定邮箱对应的指纹（兼容旧接口）
+func (fm *FingerprintManager) GetFingerprintForEmail(email, tokenKey string) *Fingerprint {
+	key := NormalizeBindingKey(email)
+	return fm.GetFingerprintForBindingKey(key, tokenKey)
 }

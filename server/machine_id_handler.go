@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"kiro2api/auth"
@@ -13,10 +14,11 @@ import (
 
 // MachineIdBindingResponse 机器码绑定响应
 type MachineIdBindingResponse struct {
-	Email     string    `json:"email"`
-	MachineId string    `json:"machine_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	BindingKey string    `json:"binding_key"`
+	Email      string    `json:"email,omitempty"`
+	MachineId  string    `json:"machine_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // RegisterMachineIdRoutes 注册机器码管理路由
@@ -36,12 +38,17 @@ func handleGetAllMachineIds(c *gin.Context) {
 	bindings := manager.GetAllBindings()
 
 	result := make([]MachineIdBindingResponse, 0, len(bindings))
-	for email, binding := range bindings {
+	for key, binding := range bindings {
+		email := ""
+		if strings.HasPrefix(key, "email:") {
+			email = strings.TrimPrefix(key, "email:")
+		}
 		result = append(result, MachineIdBindingResponse{
-			Email:     email,
-			MachineId: binding.MachineId,
-			CreatedAt: binding.CreatedAt,
-			UpdatedAt: binding.UpdatedAt,
+			BindingKey: key,
+			Email:      email,
+			MachineId:  binding.MachineId,
+			CreatedAt:  binding.CreatedAt,
+			UpdatedAt:  binding.UpdatedAt,
 		})
 	}
 
@@ -54,40 +61,52 @@ func handleGetAllMachineIds(c *gin.Context) {
 
 // handleGetMachineId 获取指定账号的机器码
 func handleGetMachineId(c *gin.Context) {
-	email, err := url.QueryUnescape(c.Param("email"))
-	if err != nil || email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+	rawKey, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || rawKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
+		return
+	}
+	bindingKey := auth.NormalizeBindingKey(rawKey)
+	if bindingKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
 		return
 	}
 
 	manager := auth.GetMachineIdBindingManager()
-	binding := manager.GetBinding(email)
+	binding := manager.GetBinding(bindingKey)
 
 	if binding == nil {
 		c.JSON(http.StatusOK, gin.H{
-			"success":    true,
-			"email":      email,
-			"machine_id": "",
-			"bound":      false,
+			"success":     true,
+			"binding_key": bindingKey,
+			"email":       strings.TrimPrefix(bindingKey, "email:"),
+			"machine_id":  "",
+			"bound":       false,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":    true,
-		"email":      email,
-		"machine_id": binding.MachineId,
-		"created_at": binding.CreatedAt,
-		"updated_at": binding.UpdatedAt,
-		"bound":      true,
+		"success":     true,
+		"binding_key": bindingKey,
+		"email":       strings.TrimPrefix(bindingKey, "email:"),
+		"machine_id":  binding.MachineId,
+		"created_at":  binding.CreatedAt,
+		"updated_at":  binding.UpdatedAt,
+		"bound":       true,
 	})
 }
 
 // handleSetMachineId 设置/更新账号的机器码
 func handleSetMachineId(c *gin.Context) {
-	email, err := url.QueryUnescape(c.Param("email"))
-	if err != nil || email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+	rawKey, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || rawKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
+		return
+	}
+	bindingKey := auth.NormalizeBindingKey(rawKey)
+	if bindingKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
 		return
 	}
 
@@ -108,61 +127,73 @@ func handleSetMachineId(c *gin.Context) {
 	}
 
 	manager := auth.GetMachineIdBindingManager()
-	if err := manager.SetBinding(email, normalizedMachineId); err != nil {
-		logger.Error("设置机器码失败", logger.Err(err), logger.String("email", email))
+	if err := manager.SetBinding(bindingKey, normalizedMachineId); err != nil {
+		logger.Error("设置机器码失败", logger.Err(err), logger.String("binding_key", bindingKey))
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存失败"})
 		return
 	}
 
 	// 更新指纹管理器中的绑定
 	fingerprintManager := auth.GetFingerprintManager()
-	fingerprintManager.SetMachineIdForEmail(email, normalizedMachineId)
+	fingerprintManager.SetMachineIdForBindingKey(bindingKey, normalizedMachineId)
 
 	logger.Info("机器码绑定成功",
-		logger.String("email", email),
+		logger.String("binding_key", bindingKey),
 		logger.String("machine_id", req.MachineId[:8]+"..."))
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":    true,
-		"message":    "机器码绑定成功",
-		"email":      email,
-		"machine_id": normalizedMachineId,
+		"success":     true,
+		"message":     "机器码绑定成功",
+		"binding_key": bindingKey,
+		"email":       strings.TrimPrefix(bindingKey, "email:"),
+		"machine_id":  normalizedMachineId,
 	})
 }
 
 // handleDeleteMachineId 删除账号的机器码绑定
 func handleDeleteMachineId(c *gin.Context) {
-	email, err := url.QueryUnescape(c.Param("email"))
-	if err != nil || email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+	rawKey, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || rawKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
+		return
+	}
+	bindingKey := auth.NormalizeBindingKey(rawKey)
+	if bindingKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
 		return
 	}
 
 	manager := auth.GetMachineIdBindingManager()
-	if err := manager.DeleteBinding(email); err != nil {
-		logger.Error("删除机器码绑定失败", logger.Err(err), logger.String("email", email))
+	if err := manager.DeleteBinding(bindingKey); err != nil {
+		logger.Error("删除机器码绑定失败", logger.Err(err), logger.String("binding_key", bindingKey))
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "删除失败"})
 		return
 	}
 
 	// 从指纹管理器中移除绑定
 	fingerprintManager := auth.GetFingerprintManager()
-	fingerprintManager.RemoveMachineIdForEmail(email)
+	fingerprintManager.RemoveMachineIdForBindingKey(bindingKey)
 
-	logger.Info("机器码绑定删除成功", logger.String("email", email))
+	logger.Info("机器码绑定删除成功", logger.String("binding_key", bindingKey))
 
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "机器码绑定已删除",
-		"email":   email,
+		"success":     true,
+		"message":     "机器码绑定已删除",
+		"binding_key": bindingKey,
+		"email":       strings.TrimPrefix(bindingKey, "email:"),
 	})
 }
 
 // handleGenerateMachineId 为账号生成随机机器码
 func handleGenerateMachineId(c *gin.Context) {
-	email, err := url.QueryUnescape(c.Param("email"))
-	if err != nil || email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的邮箱地址"})
+	rawKey, err := url.QueryUnescape(c.Param("email"))
+	if err != nil || rawKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
+		return
+	}
+	bindingKey := auth.NormalizeBindingKey(rawKey)
+	if bindingKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的绑定Key"})
 		return
 	}
 
@@ -170,24 +201,25 @@ func handleGenerateMachineId(c *gin.Context) {
 	machineId := auth.GenerateRandomMachineId()
 
 	manager := auth.GetMachineIdBindingManager()
-	if err := manager.SetBinding(email, machineId); err != nil {
-		logger.Error("生成机器码失败", logger.Err(err), logger.String("email", email))
+	if err := manager.SetBinding(bindingKey, machineId); err != nil {
+		logger.Error("生成机器码失败", logger.Err(err), logger.String("binding_key", bindingKey))
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存失败"})
 		return
 	}
 
 	// 更新指纹管理器中的绑定
 	fingerprintManager := auth.GetFingerprintManager()
-	fingerprintManager.SetMachineIdForEmail(email, machineId)
+	fingerprintManager.SetMachineIdForBindingKey(bindingKey, machineId)
 
 	logger.Info("随机机器码生成成功",
-		logger.String("email", email),
+		logger.String("binding_key", bindingKey),
 		logger.String("machine_id", machineId[:8]+"..."))
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":    true,
-		"message":    "随机机器码生成成功",
-		"email":      email,
-		"machine_id": machineId,
+		"success":     true,
+		"message":     "随机机器码生成成功",
+		"binding_key": bindingKey,
+		"email":       strings.TrimPrefix(bindingKey, "email:"),
+		"machine_id":  machineId,
 	})
 }
