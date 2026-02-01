@@ -172,7 +172,7 @@ class TokenDashboard {
         // 获取所有可删除的 Token（deletableTokens 中 deletable=true 的）
         const deletableIds = this.deletableTokens
             .filter(token => token.deletable === true)
-            .map(token => token.oauth_id);
+            .map(token => token.tokenId);
         
         // 如果当前已全选（selectedTokens.size === 可删除数量），则清空选择
         if (this.selectedTokens.size === deletableIds.length && deletableIds.length > 0) {
@@ -204,7 +204,7 @@ class TokenDashboard {
         // 3. 计算可删除 Token 数量和已选中数量
         const deletableIds = this.deletableTokens
             .filter(token => token.deletable === true)
-            .map(token => token.oauth_id);
+            .map(token => token.tokenId);
         const deletableCount = deletableIds.length;
         const selectedCount = this.selectedTokens.size;
         
@@ -404,13 +404,14 @@ class TokenDashboard {
             return;
         }
 
-        const rows = data.tokens.map(token => this.createTokenRow(token)).join('');
+        const rows = data.tokens.map((token, index) => this.createTokenRow(token, index)).join('');
         tbody.innerHTML = rows;
         this.lastTokens = data.tokens;
         
         // 渲染后更新 deletableTokens 列表
-        // 从 data.tokens 中提取每个 token 的 oauth_id、user_email、deletable 属性
-        this.deletableTokens = data.tokens.map(token => ({
+        // 使用统一的 tokenId 标识符：binding_key || oauth_id || index
+        this.deletableTokens = data.tokens.map((token, index) => ({
+            tokenId: token.binding_key || token.oauth_id || `index_${index}`,
             oauth_id: token.oauth_id || '',
             user_email: token.user_email || '',
             deletable: token.deletable === true
@@ -424,14 +425,16 @@ class TokenDashboard {
      * 创建单个Token行 (SRP原则)
      * Requirements: 1.2, 1.6, 3.1, 3.2, 3.3
      */
-    createTokenRow(token) {
+    createTokenRow(token, index) {
         const statusClass = this.getStatusClass(token);
         const statusText = this.getStatusText(token);
 
         // 判断Token类型和是否可删除
         const isDeletable = token.deletable === true;
         const tokenSource = token.source || 'unknown';
-        const tokenId = token.oauth_id || '';
+        // 使用统一的 tokenId 标识符：binding_key || oauth_id || index
+        const tokenId = token.binding_key || token.oauth_id || `index_${index}`;
+        const oauthId = token.oauth_id || '';
         const userEmail = token.user_email || 'unknown';
 
         // 创建复选框列
@@ -448,15 +451,15 @@ class TokenDashboard {
             </td>
         `;
 
-        // 创建机器码列
-        const bindingKey = token.binding_key || userEmail || '';
+        // 创建机器码列 - 直接使用后端返回的 binding_key
+        const bindingKey = token.binding_key || '';
         const machineId = this.machineIdBindings[bindingKey] || '';
         const machineIdCell = this.createMachineIdCell(bindingKey, userEmail, machineId) || '<td>-</td>';
 
         let deleteButton = '';
         if (isDeletable) {
             deleteButton = `
-                <button class="action-btn" title="删除" onclick="dashboard.deleteToken('${tokenId}', '${userEmail}', '${tokenSource}')">
+                <button class="action-btn" title="删除" onclick="dashboard.deleteToken('${oauthId}', '${userEmail}', '${tokenSource}')">
                     🗑️
                 </button>
             `;
@@ -663,9 +666,10 @@ class TokenDashboard {
             const data = await response.json();
             if (data.success && data.bindings) {
                 // 转换为 bindingKey -> machineId 映射
+                // 使用相同的 key 格式：直接使用 binding_key
                 this.machineIdBindings = {};
                 data.bindings.forEach(binding => {
-                    const key = binding.binding_key || binding.email || '';
+                    const key = binding.binding_key;
                     if (key) {
                         this.machineIdBindings[key] = binding.machine_id;
                     }
@@ -758,9 +762,11 @@ class TokenDashboard {
         // 如果有选中的账号，只对选中的账号操作
         if (this.selectedTokens.size > 0) {
             const selectedIds = Array.from(this.selectedTokens);
-            tokensToProcess = this.lastTokens.filter(token =>
-                selectedIds.includes(token.oauth_id)
-            );
+            // 使用统一的标识符格式匹配：binding_key || oauth_id || index
+            tokensToProcess = this.lastTokens.filter((token, index) => {
+                const tokenId = token.binding_key || token.oauth_id || `index_${index}`;
+                return selectedIds.includes(tokenId);
+            });
             targetDesc = `选中的 ${tokensToProcess.length} 个账号`;
         }
 
