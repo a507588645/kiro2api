@@ -474,6 +474,73 @@ class TokenDashboard {
         }
     }
 
+    async batchGenerateMachineIds() {
+        const selectedIds = Array.from(this.selectedTokens);
+        if (selectedIds.length === 0) {
+            this.showToast('请先选择账号', 'warning');
+            return;
+        }
+
+        // 获取选中的 tokens 信息
+        const selectedTokensList = this.tokens.filter(t => selectedIds.includes(this.getTokenId(t)));
+        
+        if (selectedTokensList.length === 0) {
+            this.showToast('未找到选中的账号', 'warning');
+            return;
+        }
+
+        if (!confirm(`确定要为选中的 ${selectedTokensList.length} 个账号生成随机机器码吗？`)) {
+            return;
+        }
+
+        let successCount = 0;
+        let failCount = 0;
+        const errors = [];
+
+        for (const token of selectedTokensList) {
+            const bindingKey = token.binding_key;
+            if (!bindingKey) {
+                failCount++;
+                errors.push(`${token.user_email}: 无效的绑定Key`);
+                continue;
+            }
+
+            try {
+                const res = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    successCount++;
+                    // 更新本地缓存
+                    this.machineIdBindings[bindingKey] = data.machine_id;
+                } else {
+                    failCount++;
+                    errors.push(`${token.user_email}: ${data.message || '生成失败'}`);
+                }
+            } catch (e) {
+                failCount++;
+                errors.push(`${token.user_email}: ${e.message}`);
+            }
+        }
+
+        // 显示结果
+        if (failCount === 0) {
+            this.showToast(`成功为 ${successCount} 个账号生成机器码`, 'success');
+        } else {
+            this.showToast(`成功: ${successCount}, 失败: ${failCount}`, failCount > 0 ? 'warning' : 'success');
+            if (errors.length > 0) {
+                console.error('批量生成机器码错误:', errors);
+            }
+        }
+
+        // 刷新界面
+        await this.loadMachineIds();
+        await this.refreshTokens();
+    }
+
     // ============================================================
     // 6. Actions (Delete, Import, etc.)
     // ============================================================

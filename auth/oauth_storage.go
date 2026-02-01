@@ -103,6 +103,21 @@ func (s *OAuthTokenStore) GetTokens() []StoredToken {
 	return append([]StoredToken{}, s.Tokens...)
 }
 
+// GetTokenByRefreshToken 根据 RefreshToken 获取 token
+func (s *OAuthTokenStore) GetTokenByRefreshToken(refreshToken string) *StoredToken {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for i := range s.Tokens {
+		if s.Tokens[i].RefreshToken == refreshToken {
+			// 返回副本
+			token := s.Tokens[i]
+			return &token
+		}
+	}
+	return nil
+}
+
 // DeleteToken 删除指定 ID 的 token
 func (s *OAuthTokenStore) DeleteToken(id string) error {
 	s.mutex.Lock()

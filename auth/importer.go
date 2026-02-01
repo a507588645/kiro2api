@@ -29,6 +29,7 @@ type Credentials struct {
 	AuthMethod   string `json:"authMethod"`
 	Provider     string `json:"provider"`
 	ExpiresAt    int64  `json:"expiresAt"` // Milliseconds
+	MachineId    string `json:"machineId"`
 }
 
 // ImportAccounts imports accounts from a JSON file
@@ -66,6 +67,8 @@ func ImportAccountsFromReader(r io.Reader) (imported int, skipped int, errors []
 
 	store := GetOAuthTokenStore()
 
+	machineIdManager := GetMachineIdBindingManager()
+
 	for _, creds := range credentialsList {
 		if creds.RefreshToken == "" {
 			skipped++
@@ -92,6 +95,25 @@ func ImportAccountsFromReader(r io.Reader) (imported int, skipped int, errors []
 			skipped++
 		} else {
 			imported++
+
+			// 如果有机器码，设置机器码绑定
+			if creds.MachineId != "" {
+				// 获取刚添加的 token 以获得其 ID
+				storedToken := store.GetTokenByRefreshToken(creds.RefreshToken)
+				if storedToken != nil {
+					// 使用 oauth: 前缀 + token ID 作为 binding key
+					bindingKey := "oauth:" + storedToken.ID
+					if err := machineIdManager.SetBinding(bindingKey, creds.MachineId); err != nil {
+						logger.Warn("设置机器码绑定失败",
+							logger.String("binding_key", bindingKey),
+							logger.Err(err))
+					} else {
+						logger.Info("导入时设置机器码绑定成功",
+							logger.String("binding_key", bindingKey),
+							logger.String("machine_id", creds.MachineId[:8]+"..."))
+					}
+				}
+			}
 		}
 	}
 
@@ -149,6 +171,7 @@ func mapToCredentials(m map[string]any) (Credentials, bool) {
 	authMethod := pickString(m, "authMethod", "auth_method", "auth", "authType", "auth_type")
 	provider := pickString(m, "provider")
 	expiresAt := pickInt64(m, "expiresAt", "expires_at", "expiresAtMs", "expires_at_ms")
+	machineId := pickString(m, "machineId", "machine_id", "machineID")
 
 	if accessToken == "" && refreshToken == "" && clientID == "" && clientSecret == "" {
 		return Credentials{}, false
@@ -169,6 +192,7 @@ func mapToCredentials(m map[string]any) (Credentials, bool) {
 		AuthMethod:   authMethod,
 		Provider:     provider,
 		ExpiresAt:    expiresAt,
+		MachineId:    machineId,
 	}, true
 }
 
