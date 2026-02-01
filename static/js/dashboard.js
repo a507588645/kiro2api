@@ -17,6 +17,7 @@ class TokenDashboard {
         this.machineIdBindings = {};      // bindingKey -> machineId 映射
         this.currentMachineIdEmail = '';  // 当前编辑的账号邮箱
         this.currentMachineIdKey = '';    // 当前编辑的绑定Key
+        this.lastTokens = [];             // 缓存最近一次的token列表
 
         this.init();
     }
@@ -54,6 +55,12 @@ class TokenDashboard {
             importFile.addEventListener('change', (e) => {
                 if (e.target.files[0]) this.handleImport(e.target.files[0]);
             });
+        }
+
+        // 批量随机机器码
+        const batchMachineIdBtn = document.getElementById('batchMachineIdBtn');
+        if (batchMachineIdBtn) {
+            batchMachineIdBtn.addEventListener('click', () => this.batchGenerateMachineIds());
         }
 
         // 全选复选框点击事件 - Requirements: 1.3
@@ -389,14 +396,16 @@ class TokenDashboard {
         
         if (!data.tokens || data.tokens.length === 0) {
             this.showError(tbody, '暂无Token数据');
+            this.lastTokens = [];
             // 清空 deletableTokens 列表
             this.deletableTokens = [];
             this.updateSelectionUI();
             return;
         }
-        
+
         const rows = data.tokens.map(token => this.createTokenRow(token)).join('');
         tbody.innerHTML = rows;
+        this.lastTokens = data.tokens;
         
         // 渲染后更新 deletableTokens 列表
         // 从 data.tokens 中提取每个 token 的 oauth_id、user_email、deletable 属性
@@ -441,7 +450,7 @@ class TokenDashboard {
         // 创建机器码列
         const bindingKey = token.binding_key || userEmail || '';
         const machineId = this.machineIdBindings[bindingKey] || '';
-        const machineIdCell = this.createMachineIdCell(bindingKey, userEmail, machineId);
+        const machineIdCell = this.createMachineIdCell(bindingKey, userEmail, machineId) || '<td>-</td>';
 
         let deleteButton = '';
         if (isDeletable) {
@@ -480,6 +489,11 @@ class TokenDashboard {
      * 创建机器码单元格
      */
     createMachineIdCell(bindingKey, email, machineId) {
+        if (!bindingKey) {
+            return '<td>-</td>';
+        }
+        const safeBindingKey = this.escapeJsString(bindingKey);
+        const safeEmail = this.escapeJsString(email);
         if (machineId) {
             // 已绑定：显示截断的机器码 + 编辑按钮
             const preview = machineId.substring(0, 8) + '...';
@@ -487,7 +501,7 @@ class TokenDashboard {
                 <td>
                     <div class="machine-id-cell">
                         <span class="machine-id-preview" title="${machineId}">${preview}</span>
-                        <button class="machine-id-btn bound" onclick="dashboard.showMachineIdDialog('${bindingKey}', '${email}')" title="编辑机器码">
+                        <button class="machine-id-btn bound" onclick="dashboard.showMachineIdDialog('${safeBindingKey}', '${safeEmail}')" title="编辑机器码">
                             编辑
                         </button>
                     </div>
@@ -497,8 +511,11 @@ class TokenDashboard {
             // 未绑定：显示绑定按钮
             return `
                 <td>
-                    <button class="machine-id-btn unbound" onclick="dashboard.showMachineIdDialog('${bindingKey}', '${email}')" title="绑定机器码">
+                    <button class="machine-id-btn unbound" onclick="dashboard.showMachineIdDialog('${safeBindingKey}', '${safeEmail}')" title="绑定机器码">
                         + 绑定
+                    </button>
+                    <button class="machine-id-btn unbound" onclick="dashboard.generateMachineId('${safeBindingKey}')" title="随机绑定机器码">
+                        🎲 随机
                     </button>
                 </td>
             `;
@@ -698,6 +715,81 @@ class TokenDashboard {
     }
 
     /**
+     * 直接为账号随机生成并绑定机器码
+     */
+    async generateMachineId(bindingKey) {
+        if (!bindingKey) {
+            alert('无效的账号');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}/generate`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            if (data.success) {
+                this.machineIdBindings[bindingKey] = data.machine_id;
+                await this.refreshTokens();
+                alert('随机机器码生成成功');
+            } else {
+                alert('生成失败: ' + (data.message || '未知错误'));
+            }
+        } catch (error) {
+            alert('生成失败: ' + error.message);
+        }
+    }
+
+    /**
+     * 批量随机生成机器码
+     */
+    async batchGenerateMachineIds() {
+        if (!this.lastTokens || this.lastTokens.length === 0) {
+            alert('暂无账号可操作');
+            return;
+        }
+
+        const proceed = confirm('将为账号生成随机机器码，是否继续？');
+        if (!proceed) return;
+
+        const overwrite = confirm('是否覆盖已有绑定？\n确定=覆盖；取消=仅为未绑定账号生成');
+
+        let success = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        for (const token of this.lastTokens) {
+            const bindingKey = token.binding_key || token.user_email || '';
+            if (!bindingKey) {
+                skipped++;
+                continue;
+            }
+            if (!overwrite && this.machineIdBindings[bindingKey]) {
+                skipped++;
+                continue;
+            }
+
+            try {
+                const response = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}/generate`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (data.success) {
+                    this.machineIdBindings[bindingKey] = data.machine_id;
+                    success++;
+                } else {
+                    failed++;
+                }
+            } catch (error) {
+                failed++;
+            }
+        }
+
+        await this.refreshTokens();
+        alert(`批量生成完成：成功 ${success}，跳过 ${skipped}，失败 ${failed}`);
+    }
+
+    /**
      * 复制机器码到剪贴板
      */
     async copyMachineId() {
@@ -726,6 +818,14 @@ class TokenDashboard {
             console.error('复制失败:', error);
             alert('复制失败');
         }
+    }
+
+    escapeJsString(value) {
+        return String(value)
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/\r/g, '\\r')
+            .replace(/\n/g, '\\n');
     }
 
     /**
