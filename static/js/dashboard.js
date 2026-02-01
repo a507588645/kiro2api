@@ -25,10 +25,11 @@ class TokenDashboard {
     /**
      * 初始化Dashboard
      */
-    init() {
+    async init() {
         this.bindEvents();
-        this.loadMachineIds();
-        this.refreshTokens();
+        // 先加载机器码绑定，再刷新Token列表，确保数据关联正确
+        await this.loadMachineIds();
+        await this.refreshTokens();
     }
 
     /**
@@ -742,6 +743,7 @@ class TokenDashboard {
 
     /**
      * 批量随机生成机器码
+     * 如果有选中的账号，则只对选中的账号操作；否则对所有账号操作
      */
     async batchGenerateMachineIds() {
         if (!this.lastTokens || this.lastTokens.length === 0) {
@@ -749,7 +751,25 @@ class TokenDashboard {
             return;
         }
 
-        const proceed = confirm('将为账号生成随机机器码，是否继续？');
+        // 确定要操作的账号列表
+        let tokensToProcess = this.lastTokens;
+        let targetDesc = '所有账号';
+
+        // 如果有选中的账号，只对选中的账号操作
+        if (this.selectedTokens.size > 0) {
+            const selectedIds = Array.from(this.selectedTokens);
+            tokensToProcess = this.lastTokens.filter(token =>
+                selectedIds.includes(token.oauth_id)
+            );
+            targetDesc = `选中的 ${tokensToProcess.length} 个账号`;
+        }
+
+        if (tokensToProcess.length === 0) {
+            alert('没有可操作的账号');
+            return;
+        }
+
+        const proceed = confirm(`将为${targetDesc}生成随机机器码，是否继续？`);
         if (!proceed) return;
 
         const overwrite = confirm('是否覆盖已有绑定？\n确定=覆盖；取消=仅为未绑定账号生成');
@@ -758,7 +778,7 @@ class TokenDashboard {
         let failed = 0;
         let skipped = 0;
 
-        for (const token of this.lastTokens) {
+        for (const token of tokensToProcess) {
             const bindingKey = token.binding_key || token.user_email || '';
             if (!bindingKey) {
                 skipped++;
