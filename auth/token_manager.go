@@ -274,7 +274,15 @@ func (tm *TokenManager) GetTokenWithFingerprint() (types.TokenInfo, *Fingerprint
 	// 获取指纹
 	var fingerprint *Fingerprint
 	if tm.fingerprintManager != nil {
-		fingerprint = tm.fingerprintManager.GetFingerprint(tokenKey)
+		email := ""
+		if bestToken.UsageInfo != nil {
+			email = bestToken.UsageInfo.UserInfo.Email
+		}
+		if email != "" {
+			fingerprint = tm.fingerprintManager.GetFingerprintForEmail(email, tokenKey)
+		} else {
+			fingerprint = tm.fingerprintManager.GetFingerprint(tokenKey)
+		}
 	}
 
 	tm.mutex.Lock()
@@ -341,7 +349,15 @@ func (tm *TokenManager) GetTokenWithFingerprintForSession(sessionID string) (typ
 	// 获取指纹
 	var fingerprint *Fingerprint
 	if tm.fingerprintManager != nil {
-		fingerprint = tm.fingerprintManager.GetFingerprint(tokenKey)
+		email := ""
+		if bestToken.UsageInfo != nil {
+			email = bestToken.UsageInfo.UserInfo.Email
+		}
+		if email != "" {
+			fingerprint = tm.fingerprintManager.GetFingerprintForEmail(email, tokenKey)
+		} else {
+			fingerprint = tm.fingerprintManager.GetFingerprint(tokenKey)
+		}
 	}
 
 	tm.mutex.Lock()

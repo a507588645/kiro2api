@@ -412,6 +412,9 @@ func (fm *FingerprintManager) SetMachineIdForEmail(email, machineId string) {
 	fm.mutex.Lock()
 	defer fm.mutex.Unlock()
 	fm.emailMachineIds[email] = machineId
+	// 如果已缓存该邮箱的指纹，清除以便使用新机器码
+	fpKey := "email:" + email
+	delete(fm.fingerprints, fpKey)
 }
 
 // RemoveMachineIdForEmail 移除指定邮箱的机器码绑定
@@ -419,6 +422,9 @@ func (fm *FingerprintManager) RemoveMachineIdForEmail(email string) {
 	fm.mutex.Lock()
 	defer fm.mutex.Unlock()
 	delete(fm.emailMachineIds, email)
+	// 清除邮箱指纹缓存
+	fpKey := "email:" + email
+	delete(fm.fingerprints, fpKey)
 }
 
 // GetMachineIdForEmail 获取指定邮箱绑定的机器码
@@ -455,16 +461,17 @@ func (fm *FingerprintManager) GetFingerprintForEmail(email, tokenKey string) *Fi
 
 		// 生成新指纹，使用绑定的机器码作为 KiroHash
 		fp := fm.generateFingerprint()
-		// 使用机器码的前64位作为 KiroHash（去掉连字符）
-		cleanMachineId := machineId
-		for _, c := range []string{"-"} {
-			cleanMachineId = strings.ReplaceAll(cleanMachineId, c, "")
+		// 允许 UUID 或 64位HEX
+		cleanMachineId := strings.ReplaceAll(machineId, "-", "")
+		if len(cleanMachineId) == 64 {
+			fp.KiroHash = strings.ToLower(cleanMachineId)
+		} else {
+			// UUID 去掉连字符后为32位，重复以保证64位
+			if len(cleanMachineId) < 64 {
+				cleanMachineId = cleanMachineId + cleanMachineId
+			}
+			fp.KiroHash = strings.ToLower(cleanMachineId[:64])
 		}
-		// 确保长度为64位
-		if len(cleanMachineId) < 64 {
-			cleanMachineId = cleanMachineId + cleanMachineId
-		}
-		fp.KiroHash = cleanMachineId[:64]
 		fm.fingerprints[fpKey] = fp
 		return fp
 	}

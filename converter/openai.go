@@ -140,12 +140,12 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 			// 如果有内容块，添加消息
 			if len(contentBlocks) > 0 {
 				// 修复: 当仅有 tool_use 块没有 text 块时，添加占位符
-				// 参考: kiro.rs - 格式要求 content 字段不能为空
+				// 参考: kiro.rs - 使用单个空格占位，避免污染上下文
 				if !hasTextContent && len(msg.ToolCalls) > 0 {
-					// 在开头插入占位符文本块
+					// 在开头插入占位符文本块（单个空格）
 					placeholderBlock := map[string]any{
 						"type": "text",
-						"text": "There is a tool use.",
+						"text": " ",
 					}
 					contentBlocks = append([]any{placeholderBlock}, contentBlocks...)
 				}

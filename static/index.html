@@ -106,9 +106,9 @@
                     账号: <span id="machineIdEmail" style="color: var(--text-primary);"></span>
                 </p>
                 <div class="machine-id-input-group">
-                    <label class="machine-id-label">机器码 (UUID格式)</label>
+                    <label class="machine-id-label">机器码 (UUID或64位HEX)</label>
                     <input type="text" id="machineIdInput" class="machine-id-input"
-                           placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                           placeholder="UUID 或 64 位 HEX">
                     <div class="machine-id-actions">
                         <button class="btn btn-secondary" onclick="dashboard.generateRandomMachineId()">
                             随机生成

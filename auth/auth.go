@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"kiro2api/logger"
 	"kiro2api/types"
+	"os"
 	"sync"
 )
 
@@ -72,10 +73,15 @@ func NewAuthService() (*AuthService, error) {
 	if len(configs) > 0 {
 		tokenManager = NewTokenManager(configs)
 		logger.Info("TokenManager创建成功")
-		// 预热第一个可用token
-		_, warmupErr := tokenManager.getBestToken()
-		if warmupErr != nil {
-			logger.Warn("token预热失败", logger.Err(warmupErr))
+
+		// 预热第一个可用token（可通过环境变量跳过，便于测试/离线环境）
+		if !shouldSkipTokenWarmup() {
+			_, warmupErr := tokenManager.getBestToken()
+			if warmupErr != nil {
+				logger.Warn("token预热失败", logger.Err(warmupErr))
+			}
+		} else {
+			logger.Info("已跳过token预热（SKIP_TOKEN_WARMUP=true）")
 		}
 	}
 
@@ -145,4 +151,10 @@ func (as *AuthService) ReloadTokens() error {
 	as.configs = configs
 	logger.Info("TokenManager 已重载", logger.Int("count", len(configs)))
 	return nil
+}
+
+// shouldSkipTokenWarmup 判断是否跳过token预热
+func shouldSkipTokenWarmup() bool {
+	val := os.Getenv("SKIP_TOKEN_WARMUP")
+	return val == "true" || val == "1"
 }

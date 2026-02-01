@@ -106,7 +106,10 @@ func refreshIdCToken(authConfig AuthConfig) (types.TokenInfo, error) {
 
 	// 设置IdC特殊headers（使用指纹随机化）
 	fpManager := GetFingerprintManager()
-	tokenKey := authConfig.RefreshToken[:20]
+	tokenKey := authConfig.RefreshToken
+	if len(tokenKey) > 20 {
+		tokenKey = tokenKey[:20]
+	}
 	fp := fpManager.GetFingerprint(tokenKey)
 
 	req.Header.Set("Content-Type", "application/json")

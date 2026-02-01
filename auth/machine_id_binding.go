@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"kiro2api/logger"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,6 +119,27 @@ func GenerateRandomMachineId() string {
 	return uuid.New().String()
 }
 
+var hex64Regex = regexp.MustCompile("^[0-9a-fA-F]{64}$")
+
+// NormalizeMachineId 标准化机器码格式（UUID 或 64位HEX）
+// 返回标准化字符串及是否有效
+func NormalizeMachineId(machineId string) (string, bool) {
+	trimmed := strings.TrimSpace(machineId)
+	if trimmed == "" {
+		return "", false
+	}
+
+	if parsed, err := uuid.Parse(trimmed); err == nil {
+		return parsed.String(), true
+	}
+
+	if hex64Regex.MatchString(trimmed) {
+		return strings.ToLower(trimmed), true
+	}
+
+	return "", false
+}
+
 // LoadFromFile 从文件加载绑定数据
 func (m *MachineIdBindingManager) LoadFromFile() error {
 	m.mutex.Lock()
@@ -167,6 +190,6 @@ func (m *MachineIdBindingManager) SaveToFile() error {
 
 // IsValidMachineId 验证机器码格式（UUID格式）
 func IsValidMachineId(machineId string) bool {
-	_, err := uuid.Parse(machineId)
-	return err == nil
+	_, ok := NormalizeMachineId(machineId)
+	return ok
 }

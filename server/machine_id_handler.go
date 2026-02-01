@@ -101,13 +101,14 @@ func handleSetMachineId(c *gin.Context) {
 	}
 
 	// 验证机器码格式
-	if !auth.IsValidMachineId(req.MachineId) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的机器码格式，请使用UUID格式"})
+	normalizedMachineId, ok := auth.NormalizeMachineId(req.MachineId)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的机器码格式，请使用UUID或64位HEX格式"})
 		return
 	}
 
 	manager := auth.GetMachineIdBindingManager()
-	if err := manager.SetBinding(email, req.MachineId); err != nil {
+	if err := manager.SetBinding(email, normalizedMachineId); err != nil {
 		logger.Error("设置机器码失败", logger.Err(err), logger.String("email", email))
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存失败"})
 		return
@@ -115,7 +116,7 @@ func handleSetMachineId(c *gin.Context) {
 
 	// 更新指纹管理器中的绑定
 	fingerprintManager := auth.GetFingerprintManager()
-	fingerprintManager.SetMachineIdForEmail(email, req.MachineId)
+	fingerprintManager.SetMachineIdForEmail(email, normalizedMachineId)
 
 	logger.Info("机器码绑定成功",
 		logger.String("email", email),
@@ -125,7 +126,7 @@ func handleSetMachineId(c *gin.Context) {
 		"success":    true,
 		"message":    "机器码绑定成功",
 		"email":      email,
-		"machine_id": req.MachineId,
+		"machine_id": normalizedMachineId,
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -76,26 +77,27 @@ func TestContentLengthExceedsStrategy_MapError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotResponse, gotHandled := strategy.MapError(tt.statusCode, tt.responseBody)
+			gotHandled := strategy.CanHandle(tt.statusCode, tt.responseBody)
 
 			assert.Equal(t, tt.wantHandled, gotHandled, tt.description)
 
 			if tt.wantHandled {
+				gotResponse := strategy.MapError(tt.statusCode, tt.responseBody)
 				assert.NotNil(t, gotResponse)
 				assert.Equal(t, tt.wantResponse.Type, gotResponse.Type)
 				assert.Equal(t, tt.wantResponse.StopReason, gotResponse.StopReason)
 				assert.Equal(t, tt.wantResponse.Message, gotResponse.Message)
 			} else {
-				assert.Nil(t, gotResponse)
+				// 不处理时无需调用 MapError
 			}
 		})
 	}
 }
 
-// TestContentLengthExceedsStrategy_GetErrorType 测试获取错误类型
-func TestContentLengthExceedsStrategy_GetErrorType(t *testing.T) {
+// TestContentLengthExceedsStrategy_GetStrategyName 测试获取策略名称
+func TestContentLengthExceedsStrategy_GetStrategyName(t *testing.T) {
 	strategy := &ContentLengthExceedsStrategy{}
-	assert.Equal(t, "content_length_exceeds", strategy.GetErrorType())
+	assert.Equal(t, "content_length_exceeds", strategy.GetStrategyName())
 }
 
 // TestDefaultErrorStrategy_MapError 测试默认错误策略
@@ -134,9 +136,10 @@ func TestDefaultErrorStrategy_MapError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotResponse, gotHandled := strategy.MapError(tt.statusCode, tt.responseBody)
-
+			gotHandled := strategy.CanHandle(tt.statusCode, tt.responseBody)
 			assert.True(t, gotHandled, "默认策略应该总是处理")
+
+			gotResponse := strategy.MapError(tt.statusCode, tt.responseBody)
 			assert.NotNil(t, gotResponse)
 			assert.Equal(t, "error", gotResponse.Type)
 			assert.Equal(t, tt.wantMessage, gotResponse.Message, tt.description)
@@ -144,10 +147,10 @@ func TestDefaultErrorStrategy_MapError(t *testing.T) {
 	}
 }
 
-// TestDefaultErrorStrategy_GetErrorType 测试获取默认错误类型
-func TestDefaultErrorStrategy_GetErrorType(t *testing.T) {
+// TestDefaultErrorStrategy_GetStrategyName 测试获取默认错误类型
+func TestDefaultErrorStrategy_GetStrategyName(t *testing.T) {
 	strategy := &DefaultErrorStrategy{}
-	assert.Equal(t, "default", strategy.GetErrorType())
+	assert.Equal(t, "default", strategy.GetStrategyName())
 }
 
 // TestNewErrorMapper 测试创建错误映射器
@@ -156,11 +159,17 @@ func TestNewErrorMapper(t *testing.T) {
 
 	assert.NotNil(t, mapper)
 	assert.NotNil(t, mapper.strategies)
-	assert.Len(t, mapper.strategies, 2, "应该有2个策略")
+	assert.Len(t, mapper.strategies, 8, "应该有8个策略")
 
 	// 验证策略顺序
 	assert.IsType(t, &ContentLengthExceedsStrategy{}, mapper.strategies[0], "第一个应该是ContentLengthExceedsStrategy")
-	assert.IsType(t, &DefaultErrorStrategy{}, mapper.strategies[1], "第二个应该是DefaultErrorStrategy")
+	assert.IsType(t, &PaymentRequiredStrategy{}, mapper.strategies[1], "第二个应该是PaymentRequiredStrategy")
+	assert.IsType(t, &ForbiddenStrategy{}, mapper.strategies[2], "第三个应该是ForbiddenStrategy")
+	assert.IsType(t, &RateLimitStrategy{}, mapper.strategies[3], "第四个应该是RateLimitStrategy")
+	assert.IsType(t, &ValidationErrorStrategy{}, mapper.strategies[4], "第五个应该是ValidationErrorStrategy")
+	assert.IsType(t, &ServiceUnavailableStrategy{}, mapper.strategies[5], "第六个应该是ServiceUnavailableStrategy")
+	assert.IsType(t, &InternalErrorStrategy{}, mapper.strategies[6], "第七个应该是InternalErrorStrategy")
+	assert.IsType(t, &DefaultErrorStrategy{}, mapper.strategies[7], "第八个应该是DefaultErrorStrategy")
 }
 
 // TestErrorMapper_MapCodeWhispererError 测试映射CodeWhisperer错误
@@ -191,8 +200,8 @@ func TestErrorMapper_MapCodeWhispererError(t *testing.T) {
 			responseBody:        []byte(`{"error": "server error"}`),
 			wantType:            "error",
 			wantStopReason:      "",
-			wantMessageContains: "Upstream error",
-			description:         "应该使用默认策略",
+			wantMessageContains: "上游服务内部错误",
+			description:         "应该使用内部错误策略",
 		},
 		{
 			name:                "未知错误",
@@ -200,8 +209,8 @@ func TestErrorMapper_MapCodeWhispererError(t *testing.T) {
 			responseBody:        []byte(`{"reason": "UNKNOWN"}`),
 			wantType:            "error",
 			wantStopReason:      "",
-			wantMessageContains: "Upstream error",
-			description:         "未知错误应该使用默认策略",
+			wantMessageContains: "请求参数无效",
+			description:         "未知400错误应该使用验证错误策略",
 		},
 	}
 
@@ -210,9 +219,10 @@ func TestErrorMapper_MapCodeWhispererError(t *testing.T) {
 			result := mapper.MapCodeWhispererError(tt.statusCode, tt.responseBody)
 
 			assert.NotNil(t, result)
-			assert.Equal(t, tt.wantType, result.Type, tt.description)
-			assert.Equal(t, tt.wantStopReason, result.StopReason)
-			assert.Contains(t, result.Message, tt.wantMessageContains)
+			assert.NotNil(t, result.Response)
+			assert.Equal(t, tt.wantType, result.Response.Type, tt.description)
+			assert.Equal(t, tt.wantStopReason, result.Response.StopReason)
+			assert.Contains(t, result.Response.Message, tt.wantMessageContains)
 		})
 	}
 }
@@ -227,8 +237,9 @@ func TestErrorMapper_MapCodeWhispererError_EmptyStrategies(t *testing.T) {
 	result := mapper.MapCodeWhispererError(http.StatusInternalServerError, []byte(`error`))
 
 	assert.NotNil(t, result)
-	assert.Equal(t, "error", result.Type)
-	assert.Equal(t, "Unknown error", result.Message, "空策略列表应该返回Unknown error")
+	assert.NotNil(t, result.Response)
+	assert.Equal(t, "error", result.Response.Type)
+	assert.Equal(t, "Unknown error", result.Response.Message, "空策略列表应该返回Unknown error")
 }
 
 // TestErrorMapper_SendClaudeError_MaxTokens 测试发送max_tokens错误
@@ -239,25 +250,36 @@ func TestErrorMapper_SendClaudeError_MaxTokens(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
-	claudeError := &ClaudeErrorResponse{
-		Type:       "message_delta",
-		StopReason: "max_tokens",
-		Message:    "Content length exceeds threshold",
+	result := &MapResult{
+		Response: &ClaudeErrorResponse{
+			Type:       "message_delta",
+			StopReason: "max_tokens",
+			Message:    "Content length exceeds threshold",
+			HTTPStatus: http.StatusOK,
+		},
 	}
 
-	mapper.SendClaudeError(c, claudeError)
+	mapper.SendClaudeError(c, result)
 
 	// 验证响应
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 验证响应体包含SSE格式
 	body := w.Body.String()
+	assert.Contains(t, body, "event: message_delta", "应该包含SSE event前缀")
 	assert.Contains(t, body, "data: ", "应该包含SSE data前缀")
 
 	// 解析JSON验证结构
-	// SSE格式: data: {json}\n\n
-	if len(body) > 6 {
-		jsonStr := body[6:] // 跳过 "data: "
+	lines := strings.Split(body, "\n")
+	var dataLine string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "data: ") {
+			dataLine = line
+			break
+		}
+	}
+	if dataLine != "" {
+		jsonStr := strings.TrimPrefix(dataLine, "data: ")
 		var response map[string]interface{}
 		err := json.Unmarshal([]byte(jsonStr), &response)
 		if err == nil {
@@ -277,31 +299,29 @@ func TestErrorMapper_SendClaudeError_StandardError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
-	claudeError := &ClaudeErrorResponse{
-		Type:    "error",
-		Message: "Test error message",
+	result := &MapResult{
+		Response: &ClaudeErrorResponse{
+			Type:       "error",
+			Code:       "overloaded_error",
+			Message:    "Test error message",
+			HTTPStatus: http.StatusBadRequest,
+		},
 	}
 
-	mapper.SendClaudeError(c, claudeError)
+	mapper.SendClaudeError(c, result)
 
 	// 验证响应
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	// 验证响应体包含SSE格式
-	body := w.Body.String()
-	assert.Contains(t, body, "data: ", "应该包含SSE data前缀")
-
-	// 解析JSON验证结构
-	if len(body) > 6 {
-		jsonStr := body[6:]
-		var response map[string]interface{}
-		err := json.Unmarshal([]byte(jsonStr), &response)
-		if err == nil {
-			assert.Equal(t, "error", response["type"])
-			if errorObj, ok := response["error"].(map[string]interface{}); ok {
-				assert.Equal(t, "overloaded_error", errorObj["type"])
-				assert.Equal(t, "Test error message", errorObj["message"])
-			}
+	// 验证响应体为JSON
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	if err == nil {
+		if errorObj, ok := response["error"].(map[string]interface{}); ok {
+			assert.Equal(t, "overloaded_error", errorObj["type"])
+			assert.Equal(t, "Test error message", errorObj["message"])
+		} else {
+			t.Fatalf("响应中缺少 error 字段")
 		}
 	}
 }

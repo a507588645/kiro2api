@@ -738,10 +738,11 @@ class TokenDashboard {
             return;
         }
 
-        // 验证 UUID 格式
+        // 验证 UUID 或 64位HEX 格式
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (!uuidRegex.test(machineId)) {
-            alert('无效的机器码格式，请使用 UUID 格式');
+        const hex64Regex = /^[0-9a-f]{64}$/i;
+        if (!uuidRegex.test(machineId) && !hex64Regex.test(machineId)) {
+            alert('无效的机器码格式，请使用 UUID 或 64 位 HEX 格式');
             return;
         }
 

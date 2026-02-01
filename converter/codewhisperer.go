@@ -54,7 +54,8 @@ func validateCodeWhispererRequest(cwReq *types.CodeWhispererRequest) error {
 
 	// 如果没有内容但有工具，注入占位内容 (YAGNI: 只在需要时处理)
 	if trimmedContent == "" && !hasImages && hasTools {
-		placeholder := "执行工具任务"
+		// 参考: kiro.rs - 使用单个空格占位，避免污染上下文
+		placeholder := " "
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = placeholder
 		logger.Warn("注入占位内容以触发工具调用",
 			logger.String("conversation_id", cwReq.ConversationState.ConversationId),
