@@ -583,9 +583,19 @@ func handleTokenPoolAPI(c *gin.Context) {
 func refreshSingleTokenByConfig(config auth.AuthConfig) (types.TokenInfo, error) {
 	switch config.AuthType {
 	case auth.AuthMethodSocial:
-		return auth.RefreshSocialToken(config.RefreshToken)
+		token, err := auth.RefreshSocialToken(config.RefreshToken)
+		if err != nil {
+			return types.TokenInfo{}, err
+		}
+		auth.EnsureAutoMachineIdBinding(config, token)
+		return token, nil
 	case auth.AuthMethodIdC:
-		return auth.RefreshIdCToken(config)
+		token, err := auth.RefreshIdCToken(config)
+		if err != nil {
+			return types.TokenInfo{}, err
+		}
+		auth.EnsureAutoMachineIdBinding(config, token)
+		return token, nil
 	default:
 		return types.TokenInfo{}, fmt.Errorf("不支持的认证类型: %s", config.AuthType)
 	}

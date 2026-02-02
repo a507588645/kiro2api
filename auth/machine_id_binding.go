@@ -4,13 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"kiro2api/logger"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"kiro2api/logger"
+	"kiro2api/types"
 
 	"github.com/google/uuid"
 )
@@ -198,6 +200,56 @@ func BuildMachineIdBindingKey(authConfig AuthConfig) string {
 		return bindingKeyRefreshPrefix + hex.EncodeToString(hash[:])
 	}
 	return ""
+}
+
+// GenerateStableMachineIdFromSeed 根据固定种子生成稳定机器码（64位HEX）
+func GenerateStableMachineIdFromSeed(seed string) string {
+	if strings.TrimSpace(seed) == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(seed))
+	return hex.EncodeToString(hash[:])
+}
+
+// EnsureAutoMachineIdBinding 自动生成并绑定机器码（优先profileArn，否则refreshToken）
+// 若已存在绑定则不覆盖，返回是否新增绑定
+func EnsureAutoMachineIdBinding(authConfig AuthConfig, token types.TokenInfo) (string, bool) {
+	bindingKey := BuildMachineIdBindingKey(authConfig)
+	if bindingKey == "" {
+		return "", false
+	}
+
+	manager := GetMachineIdBindingManager()
+	if existing := manager.GetBinding(bindingKey); existing != nil && existing.MachineId != "" {
+		return existing.MachineId, false
+	}
+
+	seed := strings.TrimSpace(token.ProfileArn)
+	if seed == "" {
+		seed = strings.TrimSpace(authConfig.RefreshToken)
+	}
+	if seed == "" {
+		return "", false
+	}
+
+	machineId := GenerateStableMachineIdFromSeed(seed)
+	if machineId == "" {
+		return "", false
+	}
+
+	if err := manager.SetBinding(bindingKey, machineId); err != nil {
+		logger.Warn("自动绑定机器码失败", logger.String("binding_key", bindingKey), logger.Err(err))
+		return "", false
+	}
+
+	// 同步到指纹管理器，确保立即生效
+	fpManager := GetFingerprintManager()
+	fpManager.SetMachineIdForBindingKey(bindingKey, machineId)
+
+	logger.Info("自动生成机器码绑定成功",
+		logger.String("binding_key", bindingKey),
+		logger.String("machine_id", machineId[:8]+"..."))
+	return machineId, true
 }
 
 // LoadFromFile 从文件加载绑定数据

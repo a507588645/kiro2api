@@ -16,9 +16,19 @@ import (
 func (tm *TokenManager) refreshSingleToken(authConfig AuthConfig) (types.TokenInfo, error) {
 	switch authConfig.AuthType {
 	case AuthMethodSocial:
-		return refreshSocialToken(authConfig.RefreshToken)
+		token, err := refreshSocialToken(authConfig.RefreshToken)
+		if err != nil {
+			return types.TokenInfo{}, err
+		}
+		EnsureAutoMachineIdBinding(authConfig, token)
+		return token, nil
 	case AuthMethodIdC:
-		return refreshIdCToken(authConfig)
+		token, err := refreshIdCToken(authConfig)
+		if err != nil {
+			return types.TokenInfo{}, err
+		}
+		EnsureAutoMachineIdBinding(authConfig, token)
+		return token, nil
 	default:
 		return types.TokenInfo{}, fmt.Errorf("不支持的认证类型: %s", authConfig.AuthType)
 	}
