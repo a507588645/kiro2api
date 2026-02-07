@@ -9,7 +9,7 @@
 ### 方式一：源码运行
 
 ```bash
-git clone https://github.com/your-repo/kiro2api.git
+git clone https://github.com/a507588645/kiro2api.git
 cd kiro2api
 go build -o kiro2api main.go
 ./kiro2api
