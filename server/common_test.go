@@ -20,11 +20,19 @@ func init() {
 
 // MockAuthService 用于测试的mock AuthService
 type MockAuthService struct {
-	token types.TokenInfo
-	err   error
+	token    types.TokenInfo
+	err      error
+	modelErr error
 }
 
 func (m *MockAuthService) GetToken() (types.TokenInfo, error) {
+	return m.token, m.err
+}
+
+func (m *MockAuthService) GetTokenForModel(_ string) (types.TokenInfo, error) {
+	if m.modelErr != nil {
+		return types.TokenInfo{}, m.modelErr
+	}
 	return m.token, m.err
 }
 
@@ -142,6 +150,27 @@ func TestRequestContext_GetTokenAndBody(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRequestContext_GetTokenAndBody_ModelNotFound(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/test", bytes.NewBufferString(`{"model":"claude-opus-4-6","messages":[]}`))
+
+	mockAuth := &MockAuthService{
+		modelErr: types.NewModelNotFoundErrorType("claude-opus-4-6", "test_request_id"),
+	}
+
+	reqCtx := &RequestContext{
+		GinContext:  c,
+		AuthService: mockAuth,
+		RequestType: "test",
+	}
+
+	_, _, err := reqCtx.GetTokenAndBody()
+	assert.Error(t, err)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "model_not_found")
 }
 
 func TestHandleRequestBuildError(t *testing.T) {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 	"os"
@@ -95,26 +96,41 @@ func NewAuthService() (*AuthService, error) {
 
 // GetToken 获取可用的token
 func (as *AuthService) GetToken() (types.TokenInfo, error) {
+	return as.GetTokenForModel("")
+}
+
+// GetTokenForModel 获取可用于指定模型的token
+func (as *AuthService) GetTokenForModel(model string) (types.TokenInfo, error) {
 	if as.tokenManager == nil {
 		return types.TokenInfo{}, fmt.Errorf("token管理器未初始化")
 	}
-	return as.tokenManager.getBestToken()
+	return as.tokenManager.getBestTokenForModel(model)
 }
 
 // GetTokenWithFingerprint 获取token及其对应的指纹
 func (as *AuthService) GetTokenWithFingerprint() (types.TokenInfo, *Fingerprint, error) {
+	return as.GetTokenWithFingerprintForModel("")
+}
+
+// GetTokenWithFingerprintForModel 获取指定模型可用的token及其对应的指纹
+func (as *AuthService) GetTokenWithFingerprintForModel(model string) (types.TokenInfo, *Fingerprint, error) {
 	if as.tokenManager == nil {
 		return types.TokenInfo{}, nil, fmt.Errorf("token管理器未初始化")
 	}
-	return as.tokenManager.GetTokenWithFingerprint()
+	return as.tokenManager.GetTokenWithFingerprintForModel(model)
 }
 
 // GetTokenWithFingerprintForSession 为会话获取token及其对应的指纹
 func (as *AuthService) GetTokenWithFingerprintForSession(sessionID string) (types.TokenInfo, *Fingerprint, string, error) {
+	return as.GetTokenWithFingerprintForSessionAndModel(sessionID, "")
+}
+
+// GetTokenWithFingerprintForSessionAndModel 为会话获取指定模型可用的token及其对应的指纹
+func (as *AuthService) GetTokenWithFingerprintForSessionAndModel(sessionID string, model string) (types.TokenInfo, *Fingerprint, string, error) {
 	if as.tokenManager == nil {
 		return types.TokenInfo{}, nil, "", fmt.Errorf("token管理器未初始化")
 	}
-	return as.tokenManager.GetTokenWithFingerprintForSession(sessionID)
+	return as.tokenManager.GetTokenWithFingerprintForSessionAndModel(sessionID, model)
 }
 
 // MarkTokenFailed 标记当前token请求失败
@@ -136,6 +152,14 @@ func (as *AuthService) GetTokenManager() *TokenManager {
 // GetConfigs 获取认证配置
 func (as *AuthService) GetConfigs() []AuthConfig {
 	return as.configs
+}
+
+// GetAvailableModels 获取当前账号池可用模型（按账号等级聚合）
+func (as *AuthService) GetAvailableModels() []string {
+	if as.tokenManager == nil {
+		return config.ListRequestModels()
+	}
+	return as.tokenManager.ListAvailableModels()
 }
 
 // ReloadTokens 重新加载 token 配置（OAuth token 添加后调用）

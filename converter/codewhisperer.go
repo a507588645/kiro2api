@@ -230,8 +230,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	// 智能设置ChatTriggerType (KISS: 简化逻辑但保持准确性)
 	cwReq.ConversationState.ChatTriggerType = determineChatTriggerType(anthropicReq)
 
-	// 使用稳定的会话ID生成器，基于客户端信息生成持久化的conversationId
-	if ctx != nil {
+	// 优先使用 metadata.user_id 中的 session UUID，提升跨请求会话连续性
+	if sessionID := extractSessionIDFromMetadata(anthropicReq.Metadata); sessionID != "" {
+		cwReq.ConversationState.ConversationId = sessionID
+	} else if ctx != nil {
+		// 使用稳定的会话ID生成器，基于客户端信息生成持久化的conversationId
 		cwReq.ConversationState.ConversationId = utils.GenerateStableConversationID(ctx)
 
 		// 调试日志：记录会话ID生成信息
@@ -258,6 +261,21 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 		return cwReq, fmt.Errorf("消息列表为空")
 	}
 
+	// 宽松模型归一化：兼容别名与家族匹配（对齐 kiro.rs）
+	resolvedModel, modelId, ok := config.ResolveModelID(anthropicReq.Model)
+	if !ok {
+		logger.Warn("模型映射不存在",
+			logger.String("requested_model", anthropicReq.Model),
+			logger.String("request_id", cwReq.ConversationState.AgentContinuationId))
+		return cwReq, types.NewModelNotFoundErrorType(anthropicReq.Model, cwReq.ConversationState.AgentContinuationId)
+	}
+	if resolvedModel != anthropicReq.Model {
+		logger.Info("模型已归一化",
+			logger.String("requested_model", anthropicReq.Model),
+			logger.String("resolved_model", resolvedModel))
+	}
+	anthropicReq.Model = resolvedModel
+
 	lastMessage := anthropicReq.Messages[len(anthropicReq.Messages)-1]
 
 	// 调试：记录原始消息内容
@@ -278,42 +296,21 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.Images = []types.CodeWhispererImage{}
 	}
 
-	// 新增：检查并处理 ToolResults
+	// 检查并暂存当前消息 ToolResults，后续会基于历史做配对校验
+	var currentToolResults []types.ToolResult
 	if lastMessage.Role == "user" {
-		toolResults := extractToolResultsFromMessage(lastMessage.Content)
-		if len(toolResults) > 0 {
-			cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults = toolResults
-
-			logger.Debug("已添加工具结果到请求",
-				logger.Int("tool_results_count", len(toolResults)),
-				logger.String("conversation_id", cwReq.ConversationState.ConversationId))
-
-			// 对于包含 tool_result 的请求，content 应该为空字符串（符合 req2.json 的格式）
-			cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = ""
-			logger.Debug("工具结果请求，设置 content 为空字符串")
-		}
-	}
-
-	// 检查模型映射是否存在，如果不存在则返回错误
-	modelId := config.ModelMap[anthropicReq.Model]
-	if modelId == "" {
-		logger.Warn("模型映射不存在",
-			logger.String("requested_model", anthropicReq.Model),
-			logger.String("request_id", cwReq.ConversationState.AgentContinuationId))
-
-		// 返回模型未找到错误，使用已生成的AgentContinuationId
-		return cwReq, types.NewModelNotFoundErrorType(anthropicReq.Model, cwReq.ConversationState.AgentContinuationId)
+		currentToolResults = extractToolResultsFromMessage(lastMessage.Content)
 	}
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = modelId
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR
 
 	// 处理 tools 信息 - 根据req.json实际结构优化工具转换
+	var currentTools []types.CodeWhispererTool
 	if len(anthropicReq.Tools) > 0 {
 		// logger.Debug("开始处理工具配置",
 		// 	logger.Int("tools_count", len(anthropicReq.Tools)),
 		// 	logger.String("conversation_id", cwReq.ConversationState.ConversationId))
 
-		var tools []types.CodeWhispererTool
 		for i, tool := range anthropicReq.Tools {
 			// 验证工具定义的完整性 (SOLID-SRP: 单一责任验证)
 			if tool.Name == "" {
@@ -345,11 +342,8 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			cwTool.ToolSpecification.InputSchema = types.InputSchema{
 				Json: tool.InputSchema,
 			}
-			tools = append(tools, cwTool)
+			currentTools = append(currentTools, cwTool)
 		}
-
-		// 工具配置放在 UserInputMessageContext.Tools 中 (符合req.json结构)
-		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools = tools
 	}
 
 	// 构建历史消息
@@ -450,11 +444,6 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 						}
 					}
 
-					// 修复: 验证历史工具结果，移除不存在的工具引用
-				// 参考: kiro.rs 2026.1.2 - 修复因历史中的工具不存在导致的400报错
-				if len(allToolResults) > 0 {
-					allToolResults = validateHistoricalToolResults(allToolResults, anthropicReq.Tools)
-				}
 					// 设置合并后的内容
 					mergedUserMsg.UserInputMessage.Content = strings.Join(contentParts, "\n")
 					if len(allImages) > 0 {
@@ -462,8 +451,6 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 					}
 					if len(allToolResults) > 0 {
 						mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
-						// 如果历史用户消息包含工具结果，也将 content 设置为空字符串
-						mergedUserMsg.UserInputMessage.Content = ""
 						// logger.Debug("历史用户消息包含工具结果",
 						// 	logger.Int("merged_messages", len(userMessagesBuffer)),
 						// 	logger.Int("tool_results_count", len(allToolResults)))
@@ -490,6 +477,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 				toolUses := extractToolUsesFromMessage(msg.Content)
 				if len(toolUses) > 0 {
 					assistantMsg.AssistantResponseMessage.ToolUses = toolUses
+					// 仅包含 tool_use 时，Kiro 要求 assistant content 非空
+					if strings.TrimSpace(assistantMsg.AssistantResponseMessage.Content) == "" ||
+						assistantMsg.AssistantResponseMessage.Content == "answer for user question" {
+						assistantMsg.AssistantResponseMessage.Content = " "
+					}
 				} else {
 					assistantMsg.AssistantResponseMessage.ToolUses = nil
 				}
@@ -527,8 +519,6 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			}
 			if len(allToolResults) > 0 {
 				mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
-				// 如果包含工具结果，将 content 设置为空字符串
-				mergedUserMsg.UserInputMessage.Content = ""
 			}
 			mergedUserMsg.UserInputMessage.ModelId = modelId
 			mergedUserMsg.UserInputMessage.Origin = "AI_EDITOR"
@@ -545,6 +535,23 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 		}
 
 		cwReq.ConversationState.History = history
+	}
+
+	// 基于历史校验当前 tool_result 与 tool_use 配对，并清理孤立 tool_use
+	if len(currentToolResults) > 0 {
+		validToolResults, orphanedToolUseIDs := validateToolPairing(cwReq.ConversationState.History, currentToolResults)
+		if len(orphanedToolUseIDs) > 0 {
+			removeOrphanedToolUses(cwReq.ConversationState.History, orphanedToolUseIDs)
+		}
+		if len(validToolResults) > 0 {
+			cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults = validToolResults
+		}
+	}
+
+	// 历史中出现过的工具即使本轮未显式声明，也补齐占位定义，避免上游400
+	currentTools = ensureHistoryToolsPresent(currentTools, cwReq.ConversationState.History)
+	if len(currentTools) > 0 {
+		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools = currentTools
 	}
 
 	// 处理 thinking 配置 (Claude 深度思考模式)
@@ -720,26 +727,16 @@ func hasThinkingTags(content string) bool {
 }
 
 // IsThinkingCompatibleModel 检查模型是否支持 thinking 模式
-// 仅 Claude 3.7 Sonnet 及后续版本支持深度思考功能
+// 与 kiro.rs 对齐：sonnet / opus / haiku 家族都支持 -thinking 别名。
 func IsThinkingCompatibleModel(model string) bool {
-	compatibleModels := []string{
-		// 常用别名（Claude Code/用户侧经常使用无日期后缀）
-		"claude-3-7-sonnet",
-		"claude-sonnet-4",
-		"claude-sonnet-4-5",
-		"claude-opus-4-5",
-
-		"claude-3-7-sonnet-20250219",
-		"claude-sonnet-4-20250514",
-		"claude-sonnet-4-5-20250929",
-		"claude-opus-4-5-20251101",
+	normalized := strings.TrimSpace(strings.ToLower(model))
+	normalized = strings.TrimSuffix(normalized, "-thinking")
+	if normalized == "" {
+		return false
 	}
-	for _, m := range compatibleModels {
-		if model == m {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(normalized, "sonnet") ||
+		strings.Contains(normalized, "opus") ||
+		strings.Contains(normalized, "haiku")
 }
 
 // validateToolChoiceForThinking 验证 thinking 模式下的 tool_choice 兼容性
@@ -786,39 +783,249 @@ func validateToolChoiceForThinking(req types.AnthropicRequest) error {
 	return nil
 }
 
-// validateHistoricalToolResults 验证历史工具结果，移除不存在的工具引用
-// 修复: 修复因历史中的工具不存在导致的400报错
-// 参考: kiro.rs 2026.1.2 - 修复因历史中的工具不存在导致的400报错
-func validateHistoricalToolResults(toolResults []types.ToolResult, currentTools []types.AnthropicTool) []types.ToolResult {
-	if len(toolResults) == 0 || len(currentTools) == 0 {
-		return toolResults
+// validateToolPairing 验证当前消息的 tool_result 与历史 tool_use 配对关系。
+func validateToolPairing(history []any, toolResults []types.ToolResult) ([]types.ToolResult, map[string]struct{}) {
+	if len(toolResults) == 0 {
+		return nil, nil
 	}
 
-	// 构建当前工具名称集合
-	toolNames := make(map[string]bool)
-	for _, tool := range currentTools {
-		toolNames[tool.Name] = true
+	allToolUseIDs := make(map[string]struct{})
+	historyToolResultIDs := make(map[string]struct{})
+
+	for _, msg := range history {
+		switch v := msg.(type) {
+		case types.HistoryAssistantMessage:
+			for _, toolUse := range v.AssistantResponseMessage.ToolUses {
+				if toolUse.ToolUseId != "" {
+					allToolUseIDs[toolUse.ToolUseId] = struct{}{}
+				}
+			}
+		case *types.HistoryAssistantMessage:
+			for _, toolUse := range v.AssistantResponseMessage.ToolUses {
+				if toolUse.ToolUseId != "" {
+					allToolUseIDs[toolUse.ToolUseId] = struct{}{}
+				}
+			}
+		case types.HistoryUserMessage:
+			for _, toolResult := range v.UserInputMessage.UserInputMessageContext.ToolResults {
+				if toolResult.ToolUseId != "" {
+					historyToolResultIDs[toolResult.ToolUseId] = struct{}{}
+				}
+			}
+		case *types.HistoryUserMessage:
+			for _, toolResult := range v.UserInputMessage.UserInputMessageContext.ToolResults {
+				if toolResult.ToolUseId != "" {
+					historyToolResultIDs[toolResult.ToolUseId] = struct{}{}
+				}
+			}
+		}
 	}
 
-	// 过滤有效的工具结果
-	validResults := make([]types.ToolResult, 0, len(toolResults))
-	removedCount := 0
+	unpairedToolUseIDs := make(map[string]struct{})
+	for toolUseID := range allToolUseIDs {
+		if _, paired := historyToolResultIDs[toolUseID]; !paired {
+			unpairedToolUseIDs[toolUseID] = struct{}{}
+		}
+	}
 
+	filteredResults := make([]types.ToolResult, 0, len(toolResults))
 	for _, result := range toolResults {
-		// 检查工具结果是否引用了当前存在的工具
-		// 注意：ToolResult 结构中没有直接的工具名称字段
-		// 我们需要检查 ToolUseID 是否有效
-		// 由于无法直接验证 ToolUseID，我们保留所有结果
-		// 但记录警告日志
-		validResults = append(validResults, result)
+		if result.ToolUseId == "" {
+			continue
+		}
+
+		if _, waiting := unpairedToolUseIDs[result.ToolUseId]; waiting {
+			filteredResults = append(filteredResults, result)
+			delete(unpairedToolUseIDs, result.ToolUseId)
+			continue
+		}
+
+		if _, exists := allToolUseIDs[result.ToolUseId]; exists {
+			logger.Warn("跳过重复的 tool_result：该 tool_use 已在历史中配对",
+				logger.String("tool_use_id", result.ToolUseId))
+		} else {
+			logger.Warn("跳过孤立的 tool_result：找不到对应 tool_use",
+				logger.String("tool_use_id", result.ToolUseId))
+		}
 	}
 
-	if removedCount > 0 {
-		logger.Info("历史工具结果验证完成，已移除无效引用",
-			logger.Int("total_results", len(toolResults)),
-			logger.Int("valid_results", len(validResults)),
-			logger.Int("removed_results", removedCount))
+	return filteredResults, unpairedToolUseIDs
+}
+
+// removeOrphanedToolUses 从历史 assistant 消息中移除没有配对结果的 tool_use。
+func removeOrphanedToolUses(history []any, orphanedToolUseIDs map[string]struct{}) {
+	if len(orphanedToolUseIDs) == 0 {
+		return
 	}
 
-	return validResults
+	for i, msg := range history {
+		switch v := msg.(type) {
+		case types.HistoryAssistantMessage:
+			originalCount := len(v.AssistantResponseMessage.ToolUses)
+			filtered := make([]types.ToolUseEntry, 0, originalCount)
+			for _, toolUse := range v.AssistantResponseMessage.ToolUses {
+				if _, orphaned := orphanedToolUseIDs[toolUse.ToolUseId]; !orphaned {
+					filtered = append(filtered, toolUse)
+				}
+			}
+			if len(filtered) != originalCount {
+				if len(filtered) == 0 {
+					v.AssistantResponseMessage.ToolUses = nil
+				} else {
+					v.AssistantResponseMessage.ToolUses = filtered
+				}
+				history[i] = v
+			}
+		case *types.HistoryAssistantMessage:
+			originalCount := len(v.AssistantResponseMessage.ToolUses)
+			filtered := make([]types.ToolUseEntry, 0, originalCount)
+			for _, toolUse := range v.AssistantResponseMessage.ToolUses {
+				if _, orphaned := orphanedToolUseIDs[toolUse.ToolUseId]; !orphaned {
+					filtered = append(filtered, toolUse)
+				}
+			}
+			if len(filtered) != originalCount {
+				if len(filtered) == 0 {
+					v.AssistantResponseMessage.ToolUses = nil
+				} else {
+					v.AssistantResponseMessage.ToolUses = filtered
+				}
+			}
+		}
+	}
+}
+
+// ensureHistoryToolsPresent 为历史出现但当前未声明的工具补充占位定义。
+func ensureHistoryToolsPresent(currentTools []types.CodeWhispererTool, history []any) []types.CodeWhispererTool {
+	knownToolNames := make(map[string]struct{}, len(currentTools))
+	for _, tool := range currentTools {
+		knownToolNames[strings.ToLower(tool.ToolSpecification.Name)] = struct{}{}
+	}
+
+	for _, toolName := range collectHistoryToolNames(history) {
+		lower := strings.ToLower(toolName)
+		if _, exists := knownToolNames[lower]; exists {
+			continue
+		}
+		currentTools = append(currentTools, createPlaceholderTool(toolName))
+		knownToolNames[lower] = struct{}{}
+	}
+
+	return currentTools
+}
+
+func collectHistoryToolNames(history []any) []string {
+	seen := make(map[string]struct{})
+	names := make([]string, 0)
+
+	for _, msg := range history {
+		switch v := msg.(type) {
+		case types.HistoryAssistantMessage:
+			for _, toolUse := range v.AssistantResponseMessage.ToolUses {
+				if toolUse.Name == "" {
+					continue
+				}
+				lower := strings.ToLower(toolUse.Name)
+				if _, exists := seen[lower]; exists {
+					continue
+				}
+				seen[lower] = struct{}{}
+				names = append(names, toolUse.Name)
+			}
+		case *types.HistoryAssistantMessage:
+			for _, toolUse := range v.AssistantResponseMessage.ToolUses {
+				if toolUse.Name == "" {
+					continue
+				}
+				lower := strings.ToLower(toolUse.Name)
+				if _, exists := seen[lower]; exists {
+					continue
+				}
+				seen[lower] = struct{}{}
+				names = append(names, toolUse.Name)
+			}
+		}
+	}
+
+	return names
+}
+
+func createPlaceholderTool(toolName string) types.CodeWhispererTool {
+	return types.CodeWhispererTool{
+		ToolSpecification: types.ToolSpecification{
+			Name:        toolName,
+			Description: "Tool used in conversation history",
+			InputSchema: types.InputSchema{
+				Json: map[string]any{
+					"$schema":              "http://json-schema.org/draft-07/schema#",
+					"type":                 "object",
+					"properties":           map[string]any{},
+					"required":             []any{},
+					"additionalProperties": true,
+				},
+			},
+		},
+	}
+}
+
+func extractSessionIDFromMetadata(metadata map[string]any) string {
+	if metadata == nil {
+		return ""
+	}
+	rawUserID, exists := metadata["user_id"]
+	if !exists {
+		return ""
+	}
+	userID, ok := rawUserID.(string)
+	if !ok || strings.TrimSpace(userID) == "" {
+		return ""
+	}
+	return extractSessionID(userID)
+}
+
+func extractSessionID(userID string) string {
+	const sessionPrefix = "session_"
+	pos := strings.Index(userID, sessionPrefix)
+	if pos < 0 {
+		return ""
+	}
+
+	sessionPart := userID[pos+len(sessionPrefix):]
+	if len(sessionPart) < 36 {
+		return ""
+	}
+
+	sessionID := sessionPart[:36]
+	if isUUIDLike(sessionID) {
+		return sessionID
+	}
+
+	return ""
+}
+
+func isUUIDLike(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+
+	for i := 0; i < len(s); i++ {
+		switch i {
+		case 8, 13, 18, 23:
+			if s[i] != '-' {
+				return false
+			}
+		default:
+			if !isHexByte(s[i]) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func isHexByte(b byte) bool {
+	return (b >= '0' && b <= '9') ||
+		(b >= 'a' && b <= 'f') ||
+		(b >= 'A' && b <= 'F')
 }

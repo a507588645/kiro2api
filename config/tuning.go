@@ -117,6 +117,14 @@ var SessionPoolCooldown = getEnvDuration("SESSION_POOL_COOLDOWN", 60*time.Second
 // SessionPoolRetryInterval 重试间隔
 var SessionPoolRetryInterval = getEnvDuration("SESSION_POOL_RETRY_INTERVAL", 100*time.Millisecond)
 
+// ========== 模型访问控制配置 ==========
+
+// ModelAccessControlEnabled 是否启用按账号等级限制模型访问
+var ModelAccessControlEnabled = getEnvBool("MODEL_ACCESS_CONTROL_ENABLED", true)
+
+// ModelAccessUnknownAllowed 账号等级未知时是否放行全部模型
+var ModelAccessUnknownAllowed = getEnvBool("MODEL_ACCESS_UNKNOWN_ALLOWED", true)
+
 // ========== 工具限制配置 ==========
 
 // MaxToolDescriptionLength 工具描述的最大长度（字符数，默认：10000）

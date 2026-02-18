@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,21 @@ type AuthServiceWithSession interface {
 	GetTokenWithFingerprint() (types.TokenInfo, *auth.Fingerprint, error)
 	GetTokenWithFingerprintForSession(sessionID string) (types.TokenInfo, *auth.Fingerprint, string, error)
 	MarkTokenFailed()
+}
+
+// AuthServiceWithModel 支持按模型获取 token
+type AuthServiceWithModel interface {
+	GetTokenForModel(model string) (types.TokenInfo, error)
+}
+
+// AuthServiceWithFingerprintForModel 支持按模型获取带指纹 token
+type AuthServiceWithFingerprintForModel interface {
+	GetTokenWithFingerprintForModel(model string) (types.TokenInfo, *auth.Fingerprint, error)
+}
+
+// AuthServiceWithSessionForModel 支持按模型获取会话绑定 token
+type AuthServiceWithSessionForModel interface {
+	GetTokenWithFingerprintForSessionAndModel(sessionID string, model string) (types.TokenInfo, *auth.Fingerprint, string, error)
 }
 
 // getRequestFingerprint 从上下文获取请求指纹
@@ -149,12 +165,18 @@ func executeCodeWhispererRequestWithRetry(c *gin.Context, anthropicReq types.Ant
 		var err error
 
 		if retry == 0 {
-			token, fingerprint, currentTokenKey, err = poolManager.GetAvailableToken(sessionIDStr)
+			token, fingerprint, currentTokenKey, err = poolManager.GetAvailableTokenForModel(sessionIDStr, anthropicReq.Model)
 		} else {
-			token, fingerprint, currentTokenKey, err = poolManager.GetNextAvailableToken(sessionIDStr, currentTokenKey)
+			token, fingerprint, currentTokenKey, err = poolManager.GetNextAvailableTokenForModel(sessionIDStr, currentTokenKey, anthropicReq.Model)
 		}
 
 		if err != nil {
+			var modelNotFoundErr *types.ModelNotFoundErrorType
+			if errors.As(err, &modelNotFoundErr) {
+				c.JSON(http.StatusBadRequest, modelNotFoundErr.ErrorData)
+				return nil, err
+			}
+
 			if retry == 0 {
 				logger.Error("获取Token失败", logger.Err(err))
 				respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
@@ -292,10 +314,10 @@ func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	}
 
 	// 添加上游请求必需的header（借鉴 kiro.rs）
-	req.Header.Set("x-amzn-kiro-agent-mode", "vibe") // kiro.rs 使用 "vibe"
-	req.Header.Set("x-amzn-codewhisperer-optout", "true") // 借鉴 kiro.rs
+	req.Header.Set("x-amzn-kiro-agent-mode", "vibe")             // kiro.rs 使用 "vibe"
+	req.Header.Set("x-amzn-codewhisperer-optout", "true")        // 借鉴 kiro.rs
 	req.Header.Set("amz-sdk-invocation-id", uuid.New().String()) // 借鉴 kiro.rs：请求追踪ID
-	req.Header.Set("amz-sdk-request", "attempt=1; max=3") // 借鉴 kiro.rs：重试配置
+	req.Header.Set("amz-sdk-request", "attempt=1; max=3")        // 借鉴 kiro.rs：重试配置
 
 	// 使用指纹管理器获取随机化的请求头
 	fingerprint := getRequestFingerprint(c)
@@ -479,6 +501,17 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 	var tokenInfo types.TokenInfo
 	var err error
 
+	// 先读取请求体，以便提取 model 并做模型级 token 选择
+	body, err := rc.GinContext.GetRawData()
+	if err != nil {
+		logger.Error("读取请求体失败", logger.Err(err))
+		respondError(rc.GinContext, http.StatusBadRequest, "读取请求体失败: %v", err)
+		return types.TokenInfo{}, nil, err
+	}
+
+	requestedModel := extractRequestedModel(body)
+	rc.GinContext.Set("requested_model", requestedModel)
+
 	// 提取会话 ID
 	sessionID := auth.ExtractSessionID(map[string]string{
 		"X-Session-ID": rc.GinContext.GetHeader("X-Session-ID"),
@@ -489,7 +522,23 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 	rc.GinContext.Set("session_id", sessionID)
 
 	// 尝试使用会话绑定获取 token
-	if authWithSession, ok := rc.AuthService.(AuthServiceWithSession); ok {
+	if authWithSessionModel, ok := rc.AuthService.(AuthServiceWithSessionForModel); ok {
+		var fingerprint *auth.Fingerprint
+		var tokenKey string
+		tokenInfo, fingerprint, tokenKey, err = authWithSessionModel.GetTokenWithFingerprintForSessionAndModel(sessionID, requestedModel)
+		if err == nil {
+			if fingerprint != nil {
+				rc.GinContext.Set("request_fingerprint", fingerprint)
+				logger.Debug("使用会话绑定的指纹化token",
+					logger.String("session_id", sessionID),
+					logger.String("token_key", tokenKey),
+					logger.String("os", fingerprint.OSType),
+					logger.String("sdk_version", fingerprint.SDKVersion),
+					logger.String("requested_model", requestedModel))
+			}
+			rc.GinContext.Set("token_key", tokenKey)
+		}
+	} else if authWithSession, ok := rc.AuthService.(AuthServiceWithSession); ok {
 		var fingerprint *auth.Fingerprint
 		var tokenKey string
 		tokenInfo, fingerprint, tokenKey, err = authWithSession.GetTokenWithFingerprintForSession(sessionID)
@@ -505,6 +554,16 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 			}
 			rc.GinContext.Set("token_key", tokenKey)
 		}
+	} else if authWithFpModel, ok := rc.AuthService.(AuthServiceWithFingerprintForModel); ok {
+		var fingerprint *auth.Fingerprint
+		tokenInfo, fingerprint, err = authWithFpModel.GetTokenWithFingerprintForModel(requestedModel)
+		if err == nil && fingerprint != nil {
+			rc.GinContext.Set("request_fingerprint", fingerprint)
+			logger.Debug("使用模型过滤后的指纹化token",
+				logger.String("os", fingerprint.OSType),
+				logger.String("sdk_version", fingerprint.SDKVersion),
+				logger.String("requested_model", requestedModel))
+		}
 	} else if authWithFp, ok := rc.AuthService.(AuthServiceWithFingerprint); ok {
 		// 降级到带指纹的方法
 		var fingerprint *auth.Fingerprint
@@ -516,22 +575,22 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 				logger.String("os", fingerprint.OSType),
 				logger.String("sdk_version", fingerprint.SDKVersion))
 		}
+	} else if authWithModel, ok := rc.AuthService.(AuthServiceWithModel); ok {
+		tokenInfo, err = authWithModel.GetTokenForModel(requestedModel)
 	} else {
 		// 降级到普通方法
 		tokenInfo, err = rc.AuthService.GetToken()
 	}
 
 	if err != nil {
+		var modelNotFoundErr *types.ModelNotFoundErrorType
+		if errors.As(err, &modelNotFoundErr) {
+			rc.GinContext.JSON(http.StatusBadRequest, modelNotFoundErr.ErrorData)
+			return types.TokenInfo{}, nil, err
+		}
+
 		logger.Error("获取token失败", logger.Err(err))
 		respondError(rc.GinContext, http.StatusInternalServerError, "获取token失败: %v", err)
-		return types.TokenInfo{}, nil, err
-	}
-
-	// 读取请求体
-	body, err := rc.GinContext.GetRawData()
-	if err != nil {
-		logger.Error("读取请求体失败", logger.Err(err))
-		respondError(rc.GinContext, http.StatusBadRequest, "读取请求体失败: %v", err)
 		return types.TokenInfo{}, nil, err
 	}
 
@@ -540,6 +599,7 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 		addReqFields(rc.GinContext,
 			logger.String("direction", "client_request"),
 			logger.String("session_id", sessionID),
+			logger.String("model", requestedModel),
 			logger.String("body", string(body)),
 			logger.Int("body_size", len(body)),
 			logger.String("remote_addr", rc.GinContext.ClientIP()),
@@ -547,4 +607,14 @@ func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
 		)...)
 
 	return tokenInfo, body, nil
+}
+
+func extractRequestedModel(body []byte) string {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := utils.SafeUnmarshal(body, &req); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Model)
 }

@@ -162,7 +162,9 @@ class TokenDashboard {
                     </td>
                     <td data-label="用户邮箱">
                         <div style="font-weight: 500; color: var(--text-main)">${token.user_email || 'Unknown'}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-dim)">${token.auth_type || 'social'}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-dim)">
+                            ${(token.auth_type || 'social')} · ${(token.account_level || 'unknown')}
+                        </div>
                     </td>
                     <td data-label="Token预览">
                         <span class="token-preview">${token.token_preview || 'N/A'}</span>
@@ -289,6 +291,10 @@ class TokenDashboard {
                         <span class="info-value">${token.auth_type}</span>
                     </div>
                     <div class="info-item">
+                        <span class="info-label">账号等级</span>
+                        <span class="info-value">${token.account_level || 'unknown'}</span>
+                    </div>
+                    <div class="info-item">
                         <span class="info-label">OAuth ID</span>
                         <span class="info-value" title="${token.oauth_id}">${this.truncate(token.oauth_id, 12)}</span>
                     </div>
@@ -309,6 +315,10 @@ class TokenDashboard {
                     <div class="info-item">
                         <span class="info-label">最后使用</span>
                         <span class="info-value">${this.formatDate(token.last_used)}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">可用模型</span>
+                        <span class="info-value">${(token.allowed_models || []).join(', ') || 'N/A'}</span>
                     </div>
                 </div>
             </div>

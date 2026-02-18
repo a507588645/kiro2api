@@ -50,6 +50,8 @@ type CachedToken struct {
 	CachedAt  time.Time
 	LastUsed  time.Time
 	Available float64
+	// 账号等级（从 UsageInfo 识别）
+	AccountLevel AccountLevel
 }
 
 // NewSimpleTokenCache 创建简单的token缓存
@@ -161,19 +163,22 @@ func (tm *TokenManager) proactiveRefresh() {
 		// 检查使用限制
 		var usageInfo *types.UsageLimits
 		var available float64
+		accountLevel := AccountLevelUnknown
 
 		checker := NewUsageLimitsChecker()
 		if usage, checkErr := checker.CheckUsageLimits(token); checkErr == nil {
 			usageInfo = usage
 			available = CalculateAvailableCount(usage)
+			accountLevel = DetectAccountLevelFromUsage(usage)
 		}
 
 		// 更新缓存
 		tm.cache.tokens[cacheKey] = &CachedToken{
-			Token:     token,
-			UsageInfo: usageInfo,
-			CachedAt:  now,
-			Available: available,
+			Token:        token,
+			UsageInfo:    usageInfo,
+			CachedAt:     now,
+			Available:    available,
+			AccountLevel: accountLevel,
 		}
 
 		refreshed++
@@ -191,6 +196,11 @@ func (tm *TokenManager) proactiveRefresh() {
 // getBestToken 获取最优可用token（带严格轮询和频率限制）
 // 统一锁管理：所有操作在单一锁保护下完成，避免多次加锁/解锁
 func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
+	return tm.getBestTokenForModel("")
+}
+
+// getBestTokenForModel 获取可用于指定模型的最优 token
+func (tm *TokenManager) getBestTokenForModel(requestedModel string) (types.TokenInfo, error) {
 	tm.mutex.Lock()
 	defer tm.mutex.Unlock()
 
@@ -201,9 +211,15 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 		}
 	}
 
-	// 选择下一个可用token（严格轮询）
-	bestToken, tokenKey := tm.selectNextAvailableTokenUnlocked()
+	// 选择下一个可用token（严格轮询 + 模型限制）
+	bestToken, tokenKey, modelSupported := tm.selectNextAvailableTokenForModelUnlocked(requestedModel)
 	if bestToken == nil {
+		if requestedModel != "" && !modelSupported {
+			return types.TokenInfo{}, types.NewModelNotFoundErrorType(
+				requestedModel,
+				fmt.Sprintf("model-gate-%d", time.Now().UnixNano()),
+			)
+		}
 		return types.TokenInfo{}, fmt.Errorf("没有可用的token")
 	}
 
@@ -242,6 +258,11 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 
 // GetTokenWithFingerprint 获取token及其对应的指纹
 func (tm *TokenManager) GetTokenWithFingerprint() (types.TokenInfo, *Fingerprint, error) {
+	return tm.GetTokenWithFingerprintForModel("")
+}
+
+// GetTokenWithFingerprintForModel 获取指定模型可用的token及其对应的指纹
+func (tm *TokenManager) GetTokenWithFingerprintForModel(requestedModel string) (types.TokenInfo, *Fingerprint, error) {
 	tm.mutex.Lock()
 
 	// 检查是否需要刷新缓存
@@ -251,10 +272,16 @@ func (tm *TokenManager) GetTokenWithFingerprint() (types.TokenInfo, *Fingerprint
 		}
 	}
 
-	// 选择下一个可用token（严格轮询）
-	bestToken, tokenKey := tm.selectNextAvailableTokenUnlocked()
+	// 选择下一个可用token（严格轮询 + 模型限制）
+	bestToken, tokenKey, modelSupported := tm.selectNextAvailableTokenForModelUnlocked(requestedModel)
 	if bestToken == nil {
 		tm.mutex.Unlock()
+		if requestedModel != "" && !modelSupported {
+			return types.TokenInfo{}, nil, types.NewModelNotFoundErrorType(
+				requestedModel,
+				fmt.Sprintf("model-gate-%d", time.Now().UnixNano()),
+			)
+		}
 		return types.TokenInfo{}, nil, fmt.Errorf("没有可用的token")
 	}
 
@@ -297,20 +324,28 @@ func (tm *TokenManager) GetTokenWithFingerprint() (types.TokenInfo, *Fingerprint
 
 // GetTokenWithFingerprintForSession 为会话获取 Token（支持会话绑定）
 func (tm *TokenManager) GetTokenWithFingerprintForSession(sessionID string) (types.TokenInfo, *Fingerprint, string, error) {
+	return tm.GetTokenWithFingerprintForSessionAndModel(sessionID, "")
+}
+
+// GetTokenWithFingerprintForSessionAndModel 为会话获取指定模型可用的 Token（支持会话绑定）
+func (tm *TokenManager) GetTokenWithFingerprintForSessionAndModel(sessionID string, requestedModel string) (types.TokenInfo, *Fingerprint, string, error) {
 	// 尝试获取会话绑定的 Token
 	sessionManager := GetSessionTokenBindingManager()
 	if token, fingerprint, tokenKey, bound := sessionManager.GetSessionToken(sessionID); bound {
-		// 检查 Token 是否仍然有效
-		if time.Now().Before(token.ExpiresAt) {
+		// 检查 Token 是否仍然有效，且满足当前模型限制
+		modelAllowed := tm.IsTokenAllowedForModel(tokenKey, requestedModel)
+		if time.Now().Before(token.ExpiresAt) && modelAllowed {
 			logger.Debug("使用会话绑定的Token",
 				logger.String("session_id", sessionID),
 				logger.String("token_key", tokenKey))
 			return token, fingerprint, tokenKey, nil
 		}
-		// Token 已过期，解绑会话
+
+		// Token 已过期或不满足模型限制，解绑会话
 		sessionManager.UnbindSession(sessionID)
-		logger.Debug("会话绑定的Token已过期，重新分配",
-			logger.String("session_id", sessionID))
+		logger.Debug("会话绑定的Token不可用，重新分配",
+			logger.String("session_id", sessionID),
+			logger.Bool("model_allowed", modelAllowed))
 	}
 
 	// 获取新 Token
@@ -323,10 +358,16 @@ func (tm *TokenManager) GetTokenWithFingerprintForSession(sessionID string) (typ
 		}
 	}
 
-	// 选择下一个可用token（严格轮询）
-	bestToken, tokenKey := tm.selectNextAvailableTokenUnlocked()
+	// 选择下一个可用token（严格轮询 + 模型限制）
+	bestToken, tokenKey, modelSupported := tm.selectNextAvailableTokenForModelUnlocked(requestedModel)
 	if bestToken == nil {
 		tm.mutex.Unlock()
+		if requestedModel != "" && !modelSupported {
+			return types.TokenInfo{}, nil, "", types.NewModelNotFoundErrorType(
+				requestedModel,
+				fmt.Sprintf("model-gate-%d", time.Now().UnixNano()),
+			)
+		}
 		return types.TokenInfo{}, nil, "", fmt.Errorf("没有可用的token")
 	}
 
@@ -408,6 +449,73 @@ func (tm *TokenManager) GetCurrentTokenKey() string {
 	return tm.configOrder[tm.currentIndex]
 }
 
+// IsTokenAllowedForModel 判断指定 token 是否允许请求某个模型
+func (tm *TokenManager) IsTokenAllowedForModel(tokenKey, requestedModel string) bool {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" || !config.ModelAccessControlEnabled {
+		return true
+	}
+
+	tm.mutex.RLock()
+	cached, exists := tm.cache.tokens[tokenKey]
+	tm.mutex.RUnlock()
+	if !exists {
+		// 无缓存时放行，避免因为缓存未命中导致误拦截
+		return true
+	}
+
+	level := cached.AccountLevel
+	if level == "" {
+		level = DetectAccountLevelFromUsage(cached.UsageInfo)
+	}
+	return IsModelAllowedForLevel(level, requestedModel)
+}
+
+// ListAvailableModels 返回当前 token 池可用模型（按账号等级聚合）
+func (tm *TokenManager) ListAvailableModels() []string {
+	baseModels := config.ListRequestModels()
+	if !config.ModelAccessControlEnabled {
+		return baseModels
+	}
+
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+
+	if len(tm.cache.tokens) == 0 {
+		return baseModels
+	}
+
+	allowedSet := make(map[string]struct{}, len(baseModels))
+	for _, key := range tm.configOrder {
+		cached, exists := tm.cache.tokens[key]
+		if !exists {
+			continue
+		}
+		level := cached.AccountLevel
+		if level == "" {
+			level = DetectAccountLevelFromUsage(cached.UsageInfo)
+		}
+		for _, model := range AllowedModelsForLevel(level) {
+			allowedSet[model] = struct{}{}
+		}
+	}
+
+	if len(allowedSet) == 0 {
+		return baseModels
+	}
+
+	models := make([]string, 0, len(baseModels))
+	for _, model := range baseModels {
+		if _, ok := allowedSet[model]; ok {
+			models = append(models, model)
+		}
+	}
+	if len(models) == 0 {
+		return baseModels
+	}
+	return models
+}
+
 func (tm *TokenManager) getAuthConfigByTokenKey(tokenKey string) (AuthConfig, bool) {
 	if !strings.HasPrefix(tokenKey, "token_") {
 		return AuthConfig{}, false
@@ -455,25 +563,71 @@ func (tm *TokenManager) advanceToNextToken() {
 // 内部方法：调用者必须持有 tm.mutex
 // 策略：从 currentIndex 开始，找到第一个可用的token
 func (tm *TokenManager) selectNextAvailableTokenUnlocked() (*CachedToken, string) {
+	token, tokenKey, _ := tm.selectNextAvailableTokenForModelUnlocked("")
+	return token, tokenKey
+}
+
+// selectNextAvailableTokenForModelUnlocked 严格轮询选择下一个可用token（带模型限制）
+// 返回值:
+// - *CachedToken: 选中的 token
+// - string: token key
+// - bool: 是否存在至少一个支持该模型的 token
+func (tm *TokenManager) selectNextAvailableTokenForModelUnlocked(requestedModel string) (*CachedToken, string, bool) {
+	requestedModel = strings.TrimSpace(requestedModel)
+
 	if len(tm.configOrder) == 0 {
 		// 降级到按map遍历顺序
+		modelSupported := requestedModel == ""
 		for key, cached := range tm.cache.tokens {
-			if time.Since(cached.CachedAt) <= tm.cache.ttl && cached.IsUsable() {
+			if time.Since(cached.CachedAt) > tm.cache.ttl {
+				continue
+			}
+			if !tm.isCachedTokenModelAllowed(cached, requestedModel) {
+				continue
+			}
+			modelSupported = true
+			if cached.IsUsable() {
 				logger.Debug("选择token（无顺序配置）",
 					logger.String("selected_key", key),
 					logger.Float64("available_count", cached.Available))
-				return cached, key
+				return cached, key, true
 			}
 		}
-		return nil, ""
+		return nil, "", modelSupported
 	}
 
 	// 从当前索引开始，尝试找到一个可用的token
 	startIndex := tm.currentIndex
 	tried := 0
+	modelSupported := requestedModel == ""
 
 	for tried < len(tm.configOrder) {
 		key := tm.configOrder[tm.currentIndex]
+		cached, exists := tm.cache.tokens[key]
+		if !exists {
+			tm.advanceToNextToken()
+			tried++
+			continue
+		}
+
+		// 检查token是否过期
+		if time.Since(cached.CachedAt) > tm.cache.ttl {
+			tm.advanceToNextToken()
+			tried++
+			continue
+		}
+
+		// 检查账号等级是否允许该模型
+		if !tm.isCachedTokenModelAllowed(cached, requestedModel) {
+			logger.Debug("token账号等级不支持当前模型，跳过",
+				logger.String("token_key", key),
+				logger.String("requested_model", requestedModel),
+				logger.String("account_level", string(tm.getCachedTokenLevel(cached))))
+			tm.advanceToNextToken()
+			tried++
+			continue
+		}
+		modelSupported = true
 
 		// 检查冷却期
 		if tm.rateLimiter != nil && tm.rateLimiter.IsTokenInCooldown(key) {
@@ -494,20 +648,6 @@ func (tm *TokenManager) selectNextAvailableTokenUnlocked() (*CachedToken, string
 			continue
 		}
 
-		cached, exists := tm.cache.tokens[key]
-		if !exists {
-			tm.advanceToNextToken()
-			tried++
-			continue
-		}
-
-		// 检查token是否过期
-		if time.Since(cached.CachedAt) > tm.cache.ttl {
-			tm.advanceToNextToken()
-			tried++
-			continue
-		}
-
 		// 检查token是否可用
 		if !cached.IsUsable() {
 			tm.advanceToNextToken()
@@ -522,13 +662,31 @@ func (tm *TokenManager) selectNextAvailableTokenUnlocked() (*CachedToken, string
 			logger.Int("current_index", tm.currentIndex),
 			logger.Int("start_index", startIndex))
 
-		return cached, key
+		return cached, key, true
 	}
 
 	// 所有token都不可用
 	logger.Warn("所有token都不可用（轮询一圈后）",
 		logger.Int("total_count", len(tm.configOrder)))
-	return nil, ""
+	return nil, "", modelSupported
+}
+
+func (tm *TokenManager) getCachedTokenLevel(cached *CachedToken) AccountLevel {
+	if cached == nil {
+		return AccountLevelUnknown
+	}
+	if cached.AccountLevel != "" {
+		return cached.AccountLevel
+	}
+
+	level := DetectAccountLevelFromUsage(cached.UsageInfo)
+	cached.AccountLevel = level
+	return level
+}
+
+func (tm *TokenManager) isCachedTokenModelAllowed(cached *CachedToken, requestedModel string) bool {
+	level := tm.getCachedTokenLevel(cached)
+	return IsModelAllowedForLevel(level, requestedModel)
 }
 
 // selectBestTokenUnlocked 按配置顺序选择下一个可用token（保持向后兼容）
@@ -566,11 +724,13 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 		// 检查使用限制
 		var usageInfo *types.UsageLimits
 		var available float64
+		accountLevel := AccountLevelUnknown
 
 		checker := NewUsageLimitsChecker()
 		if usage, checkErr := checker.CheckUsageLimits(token); checkErr == nil {
 			usageInfo = usage
 			available = CalculateAvailableCount(usage)
+			accountLevel = DetectAccountLevelFromUsage(usage)
 		} else {
 			logger.Warn("检查使用限制失败", logger.Err(checkErr))
 		}
@@ -578,10 +738,11 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 		// 更新缓存（直接访问，已在tm.mutex保护下）
 		cacheKey := fmt.Sprintf(config.TokenCacheKeyFormat, i)
 		tm.cache.tokens[cacheKey] = &CachedToken{
-			Token:     token,
-			UsageInfo: usageInfo,
-			CachedAt:  time.Now(),
-			Available: available,
+			Token:        token,
+			UsageInfo:    usageInfo,
+			CachedAt:     time.Now(),
+			Available:    available,
+			AccountLevel: accountLevel,
 		}
 
 		logger.Debug("token缓存更新",
@@ -619,6 +780,12 @@ func CalculateAvailableCount(usage *types.UsageLimits) float64 {
 			// 加上基础额度
 			baseAvailable := breakdown.UsageLimitWithPrecision - breakdown.CurrentUsageWithPrecision
 			totalAvailable += baseAvailable
+
+			// 加上 bonus 额度
+			if breakdown.BonusInfo != nil {
+				bonusAvailable := breakdown.BonusInfo.UsageLimitWithPrecision - breakdown.BonusInfo.CurrentUsageWithPrecision
+				totalAvailable += bonusAvailable
+			}
 
 			if totalAvailable < 0 {
 				return 0.0

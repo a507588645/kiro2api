@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
@@ -32,6 +33,11 @@ func handleCountTokens(c *gin.Context) {
 			},
 		})
 		return
+	}
+
+	// 统一模型归一化，兼容短别名和家族名
+	if resolvedModel, _, ok := config.ResolveModelID(req.Model); ok {
+		req.Model = resolvedModel
 	}
 
 	// 验证模型参数（支持所有Claude模型）

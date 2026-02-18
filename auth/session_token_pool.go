@@ -22,14 +22,14 @@ const (
 
 // PooledToken 池化的 Token 信息
 type PooledToken struct {
-	TokenKey      string           // token 标识
-	Token         types.TokenInfo  // token 信息
-	Fingerprint   *Fingerprint     // 请求指纹
-	Status        TokenPoolStatus  // 状态
-	CooldownUntil time.Time        // 冷却结束时间
-	LastUsedAt    time.Time        // 最后使用时间
-	FailCount     int              // 连续失败次数
-	SuccessCount  int              // 成功次数
+	TokenKey      string          // token 标识
+	Token         types.TokenInfo // token 信息
+	Fingerprint   *Fingerprint    // 请求指纹
+	Status        TokenPoolStatus // 状态
+	CooldownUntil time.Time       // 冷却结束时间
+	LastUsedAt    time.Time       // 最后使用时间
+	FailCount     int             // 连续失败次数
+	SuccessCount  int             // 成功次数
 }
 
 // SessionTokenPool 会话级 Token 池
@@ -92,6 +92,11 @@ func (m *SessionTokenPoolManager) SetTokenManager(tm *TokenManager) {
 
 // GetOrCreatePool 获取或创建会话池
 func (m *SessionTokenPoolManager) GetOrCreatePool(sessionID string) (*SessionTokenPool, error) {
+	return m.GetOrCreatePoolForModel(sessionID, "")
+}
+
+// GetOrCreatePoolForModel 获取或创建会话池，并确保可为指定模型分配账号
+func (m *SessionTokenPoolManager) GetOrCreatePoolForModel(sessionID, requestedModel string) (*SessionTokenPool, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -109,7 +114,7 @@ func (m *SessionTokenPoolManager) GetOrCreatePool(sessionID string) (*SessionTok
 	}
 
 	// 分配主账号
-	if err := m.allocatePrimaryToken(pool); err != nil {
+	if err := m.allocatePrimaryTokenForModel(pool, requestedModel); err != nil {
 		return nil, err
 	}
 
@@ -122,11 +127,16 @@ func (m *SessionTokenPoolManager) GetOrCreatePool(sessionID string) (*SessionTok
 
 // allocatePrimaryToken 为池分配主账号
 func (m *SessionTokenPoolManager) allocatePrimaryToken(pool *SessionTokenPool) error {
+	return m.allocatePrimaryTokenForModel(pool, "")
+}
+
+// allocatePrimaryTokenForModel 为池分配指定模型可用的主账号
+func (m *SessionTokenPoolManager) allocatePrimaryTokenForModel(pool *SessionTokenPool, requestedModel string) error {
 	if m.tokenManager == nil {
 		return fmt.Errorf("TokenManager未初始化")
 	}
 
-	token, fingerprint, tokenKey, err := m.tokenManager.GetTokenWithFingerprintForSession(pool.SessionID)
+	token, fingerprint, tokenKey, err := m.tokenManager.GetTokenWithFingerprintForSessionAndModel(pool.SessionID, requestedModel)
 	if err != nil {
 		return err
 	}
@@ -143,34 +153,45 @@ func (m *SessionTokenPoolManager) allocatePrimaryToken(pool *SessionTokenPool) e
 
 // GetAvailableToken 获取可用 Token
 func (m *SessionTokenPoolManager) GetAvailableToken(sessionID string) (types.TokenInfo, *Fingerprint, string, error) {
-	pool, err := m.GetOrCreatePool(sessionID)
+	return m.GetAvailableTokenForModel(sessionID, "")
+}
+
+// GetAvailableTokenForModel 获取可用于指定模型的 Token
+func (m *SessionTokenPoolManager) GetAvailableTokenForModel(sessionID, requestedModel string) (types.TokenInfo, *Fingerprint, string, error) {
+	pool, err := m.GetOrCreatePoolForModel(sessionID, requestedModel)
 	if err != nil {
 		return types.TokenInfo{}, nil, "", err
 	}
 
 	pool.mutex.Lock()
-	defer pool.mutex.Unlock()
-
 	pool.TotalRequests++
 	now := time.Now()
 
 	// 检查主账号
 	if pool.PrimaryToken != nil && pool.PrimaryToken.Status == TokenStatusAvailable {
-		if now.After(pool.PrimaryToken.CooldownUntil) {
+		if now.After(pool.PrimaryToken.CooldownUntil) &&
+			m.tokenSupportsModel(pool.PrimaryToken.TokenKey, requestedModel) {
 			pool.PrimaryToken.LastUsedAt = now
+			pool.mutex.Unlock()
 			return pool.PrimaryToken.Token, pool.PrimaryToken.Fingerprint, pool.PrimaryToken.TokenKey, nil
 		}
 	}
 
 	// 检查备用账号
 	for _, backup := range pool.BackupTokens {
-		if backup.Status == TokenStatusAvailable && now.After(backup.CooldownUntil) {
+		if backup.Status == TokenStatusAvailable &&
+			now.After(backup.CooldownUntil) &&
+			m.tokenSupportsModel(backup.TokenKey, requestedModel) {
 			backup.LastUsedAt = now
+			pool.mutex.Unlock()
 			return backup.Token, backup.Fingerprint, backup.TokenKey, nil
 		}
 	}
 
-	return types.TokenInfo{}, nil, "", fmt.Errorf("没有可用的Token")
+	pool.mutex.Unlock()
+
+	// 尝试分配新的备用 Token
+	return m.TryAllocateBackupTokenForModel(sessionID, requestedModel)
 }
 
 // MarkTokenCooldown 标记 Token 进入冷却
@@ -247,6 +268,11 @@ func (m *SessionTokenPoolManager) MarkTokenSuccess(sessionID, tokenKey string) {
 
 // TryAllocateBackupToken 尝试分配备用 Token
 func (m *SessionTokenPoolManager) TryAllocateBackupToken(sessionID string) (types.TokenInfo, *Fingerprint, string, error) {
+	return m.TryAllocateBackupTokenForModel(sessionID, "")
+}
+
+// TryAllocateBackupTokenForModel 尝试分配指定模型可用的备用 Token
+func (m *SessionTokenPoolManager) TryAllocateBackupTokenForModel(sessionID, requestedModel string) (types.TokenInfo, *Fingerprint, string, error) {
 	m.mutex.RLock()
 	pool, exists := m.pools[sessionID]
 	m.mutex.RUnlock()
@@ -269,7 +295,7 @@ func (m *SessionTokenPoolManager) TryAllocateBackupToken(sessionID string) (type
 		return types.TokenInfo{}, nil, "", fmt.Errorf("TokenManager未初始化")
 	}
 
-	token, fingerprint, tokenKey, err := m.tokenManager.GetTokenWithFingerprintForSession(sessionID + "_backup")
+	token, fingerprint, tokenKey, err := m.tokenManager.GetTokenWithFingerprintForSessionAndModel(sessionID+"_backup", requestedModel)
 	if err != nil {
 		return types.TokenInfo{}, nil, "", err
 	}
@@ -303,6 +329,11 @@ func (m *SessionTokenPoolManager) TryAllocateBackupToken(sessionID string) (type
 
 // GetNextAvailableToken 获取下一个可用 Token（429 重试时调用）
 func (m *SessionTokenPoolManager) GetNextAvailableToken(sessionID, currentTokenKey string) (types.TokenInfo, *Fingerprint, string, error) {
+	return m.GetNextAvailableTokenForModel(sessionID, currentTokenKey, "")
+}
+
+// GetNextAvailableTokenForModel 获取指定模型的下一个可用 Token（429 重试时调用）
+func (m *SessionTokenPoolManager) GetNextAvailableTokenForModel(sessionID, currentTokenKey, requestedModel string) (types.TokenInfo, *Fingerprint, string, error) {
 	m.mutex.RLock()
 	pool, exists := m.pools[sessionID]
 	m.mutex.RUnlock()
@@ -316,7 +347,9 @@ func (m *SessionTokenPoolManager) GetNextAvailableToken(sessionID, currentTokenK
 
 	// 检查主账号（如果不是当前失败的）
 	if pool.PrimaryToken != nil && pool.PrimaryToken.TokenKey != currentTokenKey {
-		if pool.PrimaryToken.Status == TokenStatusAvailable && now.After(pool.PrimaryToken.CooldownUntil) {
+		if pool.PrimaryToken.Status == TokenStatusAvailable &&
+			now.After(pool.PrimaryToken.CooldownUntil) &&
+			m.tokenSupportsModel(pool.PrimaryToken.TokenKey, requestedModel) {
 			pool.mutex.RUnlock()
 			return pool.PrimaryToken.Token, pool.PrimaryToken.Fingerprint, pool.PrimaryToken.TokenKey, nil
 		}
@@ -324,7 +357,10 @@ func (m *SessionTokenPoolManager) GetNextAvailableToken(sessionID, currentTokenK
 
 	// 检查备用账号
 	for _, backup := range pool.BackupTokens {
-		if backup.TokenKey != currentTokenKey && backup.Status == TokenStatusAvailable && now.After(backup.CooldownUntil) {
+		if backup.TokenKey != currentTokenKey &&
+			backup.Status == TokenStatusAvailable &&
+			now.After(backup.CooldownUntil) &&
+			m.tokenSupportsModel(backup.TokenKey, requestedModel) {
 			pool.mutex.RUnlock()
 			return backup.Token, backup.Fingerprint, backup.TokenKey, nil
 		}
@@ -332,7 +368,7 @@ func (m *SessionTokenPoolManager) GetNextAvailableToken(sessionID, currentTokenK
 	pool.mutex.RUnlock()
 
 	// 尝试分配新的备用 Token
-	return m.TryAllocateBackupToken(sessionID)
+	return m.TryAllocateBackupTokenForModel(sessionID, requestedModel)
 }
 
 // GetPoolStats 获取会话池统计信息
@@ -359,16 +395,16 @@ func (m *SessionTokenPoolManager) GetPoolStats(sessionID string) map[string]any 
 	}
 
 	return map[string]any{
-		"exists":          true,
-		"session_id":      pool.SessionID,
-		"total_requests":  pool.TotalRequests,
-		"created_at":      pool.CreatedAt.Format(time.RFC3339),
-		"last_accessed":   pool.LastAccessedAt.Format(time.RFC3339),
-		"primary_token":   pool.PrimaryToken.TokenKey,
-		"backup_count":    len(pool.BackupTokens),
-		"backup_tokens":   backupStats,
-		"max_pool_size":   m.maxPoolSize,
-		"max_retries":     m.maxRetries,
+		"exists":           true,
+		"session_id":       pool.SessionID,
+		"total_requests":   pool.TotalRequests,
+		"created_at":       pool.CreatedAt.Format(time.RFC3339),
+		"last_accessed":    pool.LastAccessedAt.Format(time.RFC3339),
+		"primary_token":    pool.PrimaryToken.TokenKey,
+		"backup_count":     len(pool.BackupTokens),
+		"backup_tokens":    backupStats,
+		"max_pool_size":    m.maxPoolSize,
+		"max_retries":      m.maxRetries,
 		"cooldown_seconds": m.cooldown.Seconds(),
 	}
 }
@@ -384,6 +420,13 @@ func (m *SessionTokenPoolManager) UnbindSession(sessionID string) {
 			logger.Int("total_requests", pool.TotalRequests))
 		delete(m.pools, sessionID)
 	}
+}
+
+func (m *SessionTokenPoolManager) tokenSupportsModel(tokenKey, requestedModel string) bool {
+	if requestedModel == "" || m.tokenManager == nil {
+		return true
+	}
+	return m.tokenManager.IsTokenAllowedForModel(tokenKey, requestedModel)
 }
 
 // cleanupLoop 定期清理过期会话池

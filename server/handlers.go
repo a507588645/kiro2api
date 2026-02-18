@@ -455,9 +455,9 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"error":           "配置已禁用",
 				"binding_key":     bindingKey,
 				// 删除相关字段
-				"source":          authConfig.Source,
-				"oauth_id":        authConfig.OAuthID,
-				"deletable":       authConfig.Deletable,
+				"source":    authConfig.Source,
+				"oauth_id":  authConfig.OAuthID,
+				"deletable": authConfig.Deletable,
 			}
 			tokenList = append(tokenList, tokenData)
 			continue
@@ -478,9 +478,9 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"error":           err.Error(),
 				"binding_key":     bindingKey,
 				// 删除相关字段
-				"source":          authConfig.Source,
-				"oauth_id":        authConfig.OAuthID,
-				"deletable":       authConfig.Deletable,
+				"source":    authConfig.Source,
+				"oauth_id":  authConfig.OAuthID,
+				"deletable": authConfig.Deletable,
 			}
 			tokenList = append(tokenList, tokenData)
 			continue
@@ -490,11 +490,15 @@ func handleTokenPoolAPI(c *gin.Context) {
 		var usageInfo *types.UsageLimits
 		var available float64 // 默认值 (浮点数)
 		var userEmail = "未知用户"
+		accountLevel := auth.AccountLevelUnknown
+		allowedModels := auth.AllowedModelsForLevel(accountLevel)
 
 		checker := auth.NewUsageLimitsChecker()
 		if usage, checkErr := checker.CheckUsageLimits(tokenInfo); checkErr == nil {
 			usageInfo = usage
 			available = auth.CalculateAvailableCount(usage)
+			accountLevel = auth.DetectAccountLevelFromUsage(usage)
+			allowedModels = auth.AllowedModelsForLevel(accountLevel)
 
 			// 提取用户邮箱
 			if usage.UserInfo.Email != "" {
@@ -513,14 +517,22 @@ func handleTokenPoolAPI(c *gin.Context) {
 			"last_used":       time.Now().Format(time.RFC3339),
 			"status":          "active",
 			"binding_key":     bindingKey,
+			"account_level":   accountLevel,
+			"allowed_models":  allowedModels,
 			// 删除相关字段
-			"source":          authConfig.Source,
-			"oauth_id":        authConfig.OAuthID,
-			"deletable":       authConfig.Deletable,
+			"source":    authConfig.Source,
+			"oauth_id":  authConfig.OAuthID,
+			"deletable": authConfig.Deletable,
 		}
 
 		// 添加使用限制详细信息 (基于CREDIT资源类型)
 		if usageInfo != nil {
+			tokenData["subscription_info"] = map[string]any{
+				"type":               usageInfo.SubscriptionInfo.Type,
+				"title":              usageInfo.SubscriptionInfo.SubscriptionTitle,
+				"overage_capability": usageInfo.SubscriptionInfo.OverageCapability,
+			}
+
 			for _, breakdown := range usageInfo.UsageBreakdownList {
 				if breakdown.ResourceType == "CREDIT" {
 					var totalLimit float64

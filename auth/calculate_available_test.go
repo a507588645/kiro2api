@@ -200,3 +200,26 @@ func TestCalculateAvailableCount_FreeTrialExhausted(t *testing.T) {
 	// 总计: 900
 	assert.Equal(t, 900.0, available)
 }
+
+func TestCalculateAvailableCount_WithBonusInfo(t *testing.T) {
+	usage := &types.UsageLimits{
+		UsageBreakdownList: []types.UsageBreakdown{
+			{
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 200.0,
+				BonusInfo: &types.BonusInfo{
+					UsageLimitWithPrecision:   300.0,
+					CurrentUsageWithPrecision: 50.0,
+				},
+			},
+		},
+	}
+
+	available := CalculateAvailableCount(usage)
+
+	// 基础额度: 1000 - 200 = 800
+	// bonus额度: 300 - 50 = 250
+	// 总计: 1050
+	assert.Equal(t, 1050.0, available)
+}

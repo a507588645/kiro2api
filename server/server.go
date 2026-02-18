@@ -76,10 +76,19 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
+		requestModels := config.ListRequestModels()
+		if modelProvider, ok := any(authService).(interface{ GetAvailableModels() []string }); ok {
+			if models := modelProvider.GetAvailableModels(); len(models) > 0 {
+				requestModels = models
+			}
+		}
+
 		// 构建模型列表
 		models := []types.Model{}
-		for anthropicModel := range config.ModelMap {
-			supportsThinking := converter.IsThinkingCompatibleModel(anthropicModel)
+		for _, anthropicModel := range requestModels {
+			isThinkingVariant := strings.HasSuffix(anthropicModel, "-thinking")
+			baseModel := strings.TrimSuffix(anthropicModel, "-thinking")
+			supportsThinking := converter.IsThinkingCompatibleModel(baseModel)
 
 			// 添加原始模型
 			model := types.Model{
@@ -95,13 +104,13 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 			models = append(models, model)
 
 			// 为支持 thinking 的模型添加 -thinking 后缀版本
-			if supportsThinking {
+			if supportsThinking && !isThinkingVariant {
 				thinkingModel := types.Model{
-					ID:               anthropicModel + "-thinking",
+					ID:               baseModel + "-thinking",
 					Object:           "model",
 					Created:          1234567890,
 					OwnedBy:          "anthropic",
-					DisplayName:      anthropicModel + " (Thinking)",
+					DisplayName:      baseModel + " (Thinking)",
 					Type:             "text",
 					MaxTokens:        200000,
 					SupportsThinking: true,
