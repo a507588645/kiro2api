@@ -15,6 +15,30 @@ func TestResolveModelID_DirectModel(t *testing.T) {
 	}
 }
 
+func TestResolveModelID_Sonnet46(t *testing.T) {
+	tests := []struct {
+		input         string
+		wantResolved  string
+		wantModelID   string
+	}{
+		{"claude-sonnet-4-6", CanonicalModelSonnet46, "claude-sonnet-4.6"},
+		{"claude-sonnet-4.6", CanonicalModelSonnet46, "claude-sonnet-4.6"},
+		{"claude-sonnet-4-6-thinking", CanonicalModelSonnet46, "claude-sonnet-4.6"},
+	}
+	for _, tt := range tests {
+		resolved, modelID, ok := ResolveModelID(tt.input)
+		if !ok {
+			t.Fatalf("expected model %q to resolve", tt.input)
+		}
+		if resolved != tt.wantResolved {
+			t.Fatalf("input %q: unexpected resolved model: %s, want %s", tt.input, resolved, tt.wantResolved)
+		}
+		if modelID != tt.wantModelID {
+			t.Fatalf("input %q: unexpected model id: %s, want %s", tt.input, modelID, tt.wantModelID)
+		}
+	}
+}
+
 func TestResolveModelID_AliasAndThinkingSuffix(t *testing.T) {
 	resolvedModel, modelID, ok := ResolveModelID("claude-opus-4.6-thinking")
 	if !ok {
@@ -50,12 +74,13 @@ func TestListRequestModels_ContainsExpectedEntries(t *testing.T) {
 	if len(models) == 0 {
 		t.Fatalf("expected non-empty model list")
 	}
-	if len(models) != 4 {
-		t.Fatalf("expected 4 base models, got %d", len(models))
+	if len(models) != 5 {
+		t.Fatalf("expected 5 base models, got %d", len(models))
 	}
 
 	required := map[string]bool{
 		"claude-sonnet-4-5-20250929": false,
+		"claude-sonnet-4-6":          false,
 		"claude-opus-4-5-20251101":   false,
 		"claude-opus-4-6":            false,
 		"claude-haiku-4-5-20251001":  false,

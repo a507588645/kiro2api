@@ -52,11 +52,11 @@ func refreshSocialToken(refreshToken string) (types.TokenInfo, error) {
 		prefixLen = tokenLen
 	}
 	logger.Debug("Social token 刷新请求",
-		logger.String("url", config.RefreshTokenURL),
+		logger.String("url", config.GetRefreshTokenURL()),
 		logger.Int("token_length", tokenLen),
 		logger.String("token_prefix", refreshToken[:prefixLen]))
 
-	req, err := http.NewRequest("POST", config.RefreshTokenURL, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", config.GetRefreshTokenURL(), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -109,7 +109,7 @@ func refreshIdCToken(authConfig AuthConfig) (types.TokenInfo, error) {
 		return types.TokenInfo{}, fmt.Errorf("序列化IdC请求失败: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", config.IdcRefreshTokenURL, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", config.GetIdcRefreshTokenURL(), bytes.NewBuffer(reqBody))
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("创建IdC请求失败: %v", err)
 	}
@@ -123,7 +123,7 @@ func refreshIdCToken(authConfig AuthConfig) (types.TokenInfo, error) {
 	fp := fpManager.GetFingerprint(tokenKey)
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Host", "oidc.us-east-1.amazonaws.com")
+	req.Header.Set("Host", fmt.Sprintf("oidc.%s.amazonaws.com", config.DefaultRegion))
 	req.Header.Set("Connection", fp.ConnectionBehavior)
 	req.Header.Set("x-amz-user-agent", fmt.Sprintf("aws-sdk-js/3.738.0 ua/2.1 os/%s lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE", fp.OSType))
 	req.Header.Set("Accept", "*/*")

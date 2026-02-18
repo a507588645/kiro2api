@@ -192,18 +192,33 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 			return
 		}
 
-		// 检测 -thinking 后缀，自动开启思考模式
+		// 检测 -thinking 后缀，自动开启思考模式（与 kiro.rs 对齐）
 		if strings.HasSuffix(anthropicReq.Model, "-thinking") {
 			anthropicReq.Model = strings.TrimSuffix(anthropicReq.Model, "-thinking")
 			if anthropicReq.Thinking == nil {
-				budgetTokens := 16000 // 官方推荐：适合编程等复杂场景
-				anthropicReq.Thinking = &types.Thinking{
-					Type:         "enabled",
-					BudgetTokens: budgetTokens,
+				// 与 kiro.rs 对齐：Opus 4.6 使用 adaptive 模式，其他使用 enabled
+				modelLower := strings.ToLower(anthropicReq.Model)
+				isOpus46 := strings.Contains(modelLower, "opus") &&
+					(strings.Contains(modelLower, "4-6") || strings.Contains(modelLower, "4.6"))
+
+				budgetTokens := 20000 // 与 kiro.rs 对齐
+				if isOpus46 {
+					anthropicReq.Thinking = &types.Thinking{
+						Type:         "adaptive",
+						BudgetTokens: budgetTokens,
+					}
+					anthropicReq.OutputConfig = &types.OutputConfig{
+						Effort: "high",
+					}
+				} else {
+					anthropicReq.Thinking = &types.Thinking{
+						Type:         "enabled",
+						BudgetTokens: budgetTokens,
+					}
 				}
 				// 确保 max_tokens > budget_tokens（官方 API 要求）
 				if anthropicReq.MaxTokens <= budgetTokens {
-					anthropicReq.MaxTokens = 20000 // 官方示例推荐值
+					anthropicReq.MaxTokens = budgetTokens + 4096
 				}
 			}
 		}

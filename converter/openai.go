@@ -197,28 +197,44 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 		stream = *openaiReq.Stream
 	}
 
-	// 检测 -thinking 后缀，自动开启思考模式
+	// 检测 -thinking 后缀，自动开启思考模式（与 kiro.rs 对齐）
 	model := openaiReq.Model
 	var thinking *types.Thinking
+	var outputConfig *types.OutputConfig
 	if strings.HasSuffix(model, "-thinking") {
 		model = strings.TrimSuffix(model, "-thinking")
-		budgetTokens := 16000 // 官方推荐：适合编程等复杂场景
-		thinking = &types.Thinking{
-			Type:         "enabled",
-			BudgetTokens: budgetTokens,
+		budgetTokens := 20000 // 与 kiro.rs 对齐
+		// 与 kiro.rs 对齐：Opus 4.6 使用 adaptive 模式
+		modelLower := strings.ToLower(model)
+		isOpus46 := strings.Contains(modelLower, "opus") &&
+			(strings.Contains(modelLower, "4-6") || strings.Contains(modelLower, "4.6"))
+		if isOpus46 {
+			thinking = &types.Thinking{
+				Type:         "adaptive",
+				BudgetTokens: budgetTokens,
+			}
+			outputConfig = &types.OutputConfig{
+				Effort: "high",
+			}
+		} else {
+			thinking = &types.Thinking{
+				Type:         "enabled",
+				BudgetTokens: budgetTokens,
+			}
 		}
 		// 确保 max_tokens > budget_tokens（官方 API 要求）
 		if maxTokens <= budgetTokens {
-			maxTokens = 20000 // 官方示例推荐值
+			maxTokens = budgetTokens + 4096
 		}
 	}
 
 	anthropicReq := types.AnthropicRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		Messages:  anthropicMessages,
-		Stream:    stream,
-		Thinking:  thinking,
+		Model:        model,
+		MaxTokens:    maxTokens,
+		Messages:     anthropicMessages,
+		Stream:       stream,
+		Thinking:     thinking,
+		OutputConfig: outputConfig,
 	}
 
 	if openaiReq.Temperature != nil {

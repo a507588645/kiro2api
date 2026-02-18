@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"io"
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
@@ -27,7 +28,7 @@ func NewUsageLimitsChecker() *UsageLimitsChecker {
 // CheckUsageLimits 检查token的使用限制 (基于token.md API规范)
 func (c *UsageLimitsChecker) CheckUsageLimits(token types.TokenInfo) (*types.UsageLimits, error) {
 	// 构建请求URL (完全遵循token.md中的示例)
-	baseURL := "https://codewhisperer.us-east-1.amazonaws.com/getUsageLimits"
+	baseURL := config.GetUsageLimitsURL()
 	params := url.Values{}
 	params.Add("isEmailRequired", "true")
 	params.Add("origin", "AI_EDITOR")
@@ -49,7 +50,7 @@ func (c *UsageLimitsChecker) CheckUsageLimits(token types.TokenInfo) (*types.Usa
 
 	req.Header.Set("x-amz-user-agent", fp.BuildAmzUserAgent())
 	req.Header.Set("user-agent", fp.BuildUserAgent())
-	req.Header.Set("host", "codewhisperer.us-east-1.amazonaws.com")
+	req.Header.Set("host", config.GetCodeWhispererHost())
 	req.Header.Set("amz-sdk-invocation-id", generateInvocationID())
 	req.Header.Set("amz-sdk-request", "attempt=1; max=1")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))

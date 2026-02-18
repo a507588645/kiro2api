@@ -350,8 +350,8 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 || len(anthropicReq.Tools) > 0 || anthropicReq.Thinking != nil {
 		var history []any
 
-		// 生成 thinking 前缀（借鉴 kiro.rs）
-		thinkingPrefix := generateThinkingPrefix(anthropicReq.Thinking)
+		// 生成 thinking 前缀（借鉴 kiro.rs，支持 adaptive 模式）
+		thinkingPrefix := generateThinkingPrefixWithRequest(anthropicReq)
 
 		// 构建综合系统提示
 		var systemContentBuilder strings.Builder
@@ -386,7 +386,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			history = append(history, userMsg)
 
 			assistantMsg := types.HistoryAssistantMessage{}
-			assistantMsg.AssistantResponseMessage.Content = "OK"
+			assistantMsg.AssistantResponseMessage.Content = "I will follow these instructions."
 			assistantMsg.AssistantResponseMessage.ToolUses = nil
 			history = append(history, assistantMsg)
 		} else if thinkingPrefix != "" {
@@ -398,7 +398,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			history = append(history, userMsg)
 
 			assistantMsg := types.HistoryAssistantMessage{}
-			assistantMsg.AssistantResponseMessage.Content = "OK"
+			assistantMsg.AssistantResponseMessage.Content = "I will follow these instructions."
 			assistantMsg.AssistantResponseMessage.ToolUses = nil
 			history = append(history, assistantMsg)
 
@@ -526,7 +526,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 
 			// 添加占位的 assistant 回复以保持配对
 			assistantMsg := types.HistoryAssistantMessage{}
-			assistantMsg.AssistantResponseMessage.Content = "OK"
+			assistantMsg.AssistantResponseMessage.Content = "I will follow these instructions."
 			assistantMsg.AssistantResponseMessage.ToolUses = nil
 			history = append(history, assistantMsg)
 
@@ -555,7 +555,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	}
 
 	// 处理 thinking 配置 (Claude 深度思考模式)
-	if anthropicReq.Thinking != nil && anthropicReq.Thinking.Type == "enabled" {
+	if anthropicReq.Thinking != nil && anthropicReq.Thinking.IsEnabled() {
 		// 验证模型兼容性
 		if !IsThinkingCompatibleModel(anthropicReq.Model) {
 			return cwReq, fmt.Errorf("模型 %s 不支持 thinking 模式，仅支持 Claude 3.7 Sonnet 及后续版本", anthropicReq.Model)
@@ -597,7 +597,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 		cwReq.InferenceConfiguration = &types.InferenceConfiguration{
 			MaxTokens: effectiveMaxTokens,
 			Thinking: &types.CodeWhispererThinking{
-				Type:         "enabled",
+				Type:         anthropicReq.Thinking.Type,
 				BudgetTokens: budgetTokens,
 			},
 		}
@@ -609,6 +609,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 
 		logger.Debug("已启用 thinking 模式",
 			logger.String("model", anthropicReq.Model),
+			logger.String("thinking_type", anthropicReq.Thinking.Type),
 			logger.Int("budget_tokens", budgetTokens),
 			logger.Int("max_tokens", effectiveMaxTokens))
 	}
@@ -714,11 +715,36 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 // generateThinkingPrefix 生成 thinking 标签前缀（借鉴 kiro.rs）
 // 当 thinking 启用时，在系统消息最前面注入标签，确保上游正确识别 thinking 模式
 func generateThinkingPrefix(thinking *types.Thinking) string {
-	if thinking == nil || thinking.Type != "enabled" {
+	if thinking == nil {
 		return ""
 	}
-	budgetTokens := thinking.NormalizeBudgetTokens()
-	return fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", budgetTokens)
+	if thinking.Type == "enabled" {
+		budgetTokens := thinking.NormalizeBudgetTokens()
+		return fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", budgetTokens)
+	}
+	if thinking.Type == "adaptive" {
+		return "<thinking_mode>adaptive</thinking_mode><thinking_effort>high</thinking_effort>"
+	}
+	return ""
+}
+
+// generateThinkingPrefixWithRequest 生成 thinking 标签前缀（支持 adaptive 模式读取 effort）
+func generateThinkingPrefixWithRequest(anthropicReq types.AnthropicRequest) string {
+	if anthropicReq.Thinking == nil {
+		return ""
+	}
+	if anthropicReq.Thinking.Type == "enabled" {
+		budgetTokens := anthropicReq.Thinking.NormalizeBudgetTokens()
+		return fmt.Sprintf("<thinking_mode>enabled</thinking_mode><max_thinking_length>%d</max_thinking_length>", budgetTokens)
+	}
+	if anthropicReq.Thinking.Type == "adaptive" {
+		effort := "high"
+		if anthropicReq.OutputConfig != nil && anthropicReq.OutputConfig.Effort != "" {
+			effort = anthropicReq.OutputConfig.Effort
+		}
+		return fmt.Sprintf("<thinking_mode>adaptive</thinking_mode><thinking_effort>%s</thinking_effort>", effort)
+	}
+	return ""
 }
 
 // hasThinkingTags 检查内容是否已包含 thinking 标签（避免重复注入）
@@ -957,7 +983,6 @@ func createPlaceholderTool(toolName string) types.CodeWhispererTool {
 			Description: "Tool used in conversation history",
 			InputSchema: types.InputSchema{
 				Json: map[string]any{
-					"$schema":              "http://json-schema.org/draft-07/schema#",
 					"type":                 "object",
 					"properties":           map[string]any{},
 					"required":             []any{},

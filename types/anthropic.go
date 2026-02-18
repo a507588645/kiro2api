@@ -22,7 +22,7 @@ type ToolChoice struct {
 
 // Thinking 表示 Claude 深度思考配置
 type Thinking struct {
-	Type         string `json:"type"`          // "enabled" 或 "disabled"
+	Type         string `json:"type"`          // "enabled", "adaptive" 或 "disabled"
 	BudgetTokens int    `json:"budget_tokens"` // 思考预算 token 数
 }
 
@@ -42,7 +42,7 @@ func (t *Thinking) UnmarshalJSON(data []byte) error {
 
 	// 仅当 thinking 启用时规范化 budget_tokens
 	// 统一使用 NormalizeBudgetTokens() 避免逻辑重复
-	if t.Type == "enabled" {
+	if t.Type == "enabled" || t.Type == "adaptive" {
 		t.BudgetTokens = t.NormalizeBudgetTokens()
 	}
 
@@ -51,11 +51,11 @@ func (t *Thinking) UnmarshalJSON(data []byte) error {
 
 // Validate 验证 thinking 配置
 func (t *Thinking) Validate() error {
-	if t.Type != "enabled" && t.Type != "disabled" && t.Type != "" {
-		return fmt.Errorf("thinking.type 必须为 'enabled' 或 'disabled'，当前为: %s", t.Type)
+	if t.Type != "enabled" && t.Type != "adaptive" && t.Type != "disabled" && t.Type != "" {
+		return fmt.Errorf("thinking.type 必须为 'enabled'、'adaptive' 或 'disabled'，当前为: %s", t.Type)
 	}
 
-	if t.Type == "enabled" {
+	if t.Type == "enabled" || t.Type == "adaptive" {
 		if t.BudgetTokens < config.ThinkingBudgetTokensMin {
 			return fmt.Errorf("budget_tokens 不能小于 %d，当前为: %d",
 				config.ThinkingBudgetTokensMin, t.BudgetTokens)
@@ -63,6 +63,11 @@ func (t *Thinking) Validate() error {
 	}
 
 	return nil
+}
+
+// IsEnabled 检查是否启用了 thinking（enabled 或 adaptive）
+func (t *Thinking) IsEnabled() bool {
+	return t.Type == "enabled" || t.Type == "adaptive"
 }
 
 // NormalizeBudgetTokens 规范化 budget_tokens 值
@@ -79,18 +84,24 @@ func (t *Thinking) NormalizeBudgetTokens() int {
 	return t.BudgetTokens
 }
 
+// OutputConfig 表示输出配置（与 kiro.rs 对齐，用于 adaptive thinking 模式）
+type OutputConfig struct {
+	Effort string `json:"effort"` // "high", "medium", "low"
+}
+
 // AnthropicRequest 表示 Anthropic API 的请求结构
 type AnthropicRequest struct {
-	Model       string                    `json:"model"`
-	MaxTokens   int                       `json:"max_tokens"`
-	Messages    []AnthropicRequestMessage `json:"messages"`
-	System      []AnthropicSystemMessage  `json:"system,omitempty"`
-	Tools       []AnthropicTool           `json:"tools,omitempty"`
-	ToolChoice  any                       `json:"tool_choice,omitempty"` // 可以是string或ToolChoice对象
-	Stream      bool                      `json:"stream"`
-	Temperature *float64                  `json:"temperature,omitempty"`
-	Metadata    map[string]any            `json:"metadata,omitempty"`
-	Thinking    *Thinking                 `json:"thinking,omitempty"` // Claude 深度思考配置
+	Model        string                    `json:"model"`
+	MaxTokens    int                       `json:"max_tokens"`
+	Messages     []AnthropicRequestMessage `json:"messages"`
+	System       []AnthropicSystemMessage  `json:"system,omitempty"`
+	Tools        []AnthropicTool           `json:"tools,omitempty"`
+	ToolChoice   any                       `json:"tool_choice,omitempty"` // 可以是string或ToolChoice对象
+	Stream       bool                      `json:"stream"`
+	Temperature  *float64                  `json:"temperature,omitempty"`
+	Metadata     map[string]any            `json:"metadata,omitempty"`
+	Thinking     *Thinking                 `json:"thinking,omitempty"`       // Claude 深度思考配置
+	OutputConfig *OutputConfig             `json:"output_config,omitempty"`  // 输出配置（adaptive thinking 的 effort）
 }
 
 // UnmarshalJSON 自定义反序列化，支持传统 Anthropic API 格式

@@ -173,3 +173,11 @@ func getEnvBool(key string, defaultVal bool) bool {
 	}
 	return defaultVal
 }
+
+// getEnvString 从环境变量读取字符串
+func getEnvString(key string, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultVal
+}

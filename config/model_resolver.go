@@ -6,12 +6,14 @@ const (
 	CanonicalModelOpus45   = "claude-opus-4-5-20251101"
 	CanonicalModelOpus46   = "claude-opus-4-6"
 	CanonicalModelSonnet45 = "claude-sonnet-4-5-20250929"
+	CanonicalModelSonnet46 = "claude-sonnet-4-6"
 	CanonicalModelHaiku45  = "claude-haiku-4-5-20251001"
 )
 
 // 与同上游项目保持一致：对外展示这一组模型。
 var publicRequestModels = []string{
 	"claude-sonnet-4-5-20250929",
+	"claude-sonnet-4-6",
 	"claude-opus-4-5-20251101",
 	"claude-opus-4-6",
 	"claude-haiku-4-5-20251001",
@@ -24,7 +26,8 @@ func NormalizeModelName(model string) string {
 
 // ResolveModelID 将外部模型名归一化并映射到上游 modelId。
 // 与 kiro.rs 对齐：
-// - sonnet* -> claude-sonnet-4.5
+// - sonnet* 且包含 4.6/4-6 -> claude-sonnet-4.6
+// - sonnet* 其他 -> claude-sonnet-4.5
 // - opus* 且包含 4.5/4-5 -> claude-opus-4.5
 // - opus* 其他 -> claude-opus-4.6
 // - haiku* -> claude-haiku-4.5
@@ -36,6 +39,9 @@ func ResolveModelID(model string) (resolvedModel string, modelID string, ok bool
 
 	switch {
 	case strings.Contains(normalized, "sonnet"):
+		if strings.Contains(normalized, "4-6") || strings.Contains(normalized, "4.6") {
+			return CanonicalModelSonnet46, "claude-sonnet-4.6", true
+		}
 		return CanonicalModelSonnet45, "claude-sonnet-4.5", true
 	case strings.Contains(normalized, "opus"):
 		if strings.Contains(normalized, "4-5") || strings.Contains(normalized, "4.5") {

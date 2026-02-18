@@ -136,18 +136,72 @@ func cleanAndValidateToolParameters(params map[string]any) (map[string]any, erro
 	return result, err
 }
 
+// normalizeJsonSchema 规范化顶级 JSON Schema，尽可能对齐 kiro.rs 的 normalize_json_schema。
+// 规则：
+// - type：如果不存在或不是非空字符串，设为 "object"
+// - properties：如果不存在或不是 map，设为空 map
+// - required：如果不是数组或为 nil，设为空数组；如果是数组，过滤出字符串元素
+// - additionalProperties：如果是 bool 或 map 则保留，否则设为 true
+func normalizeJsonSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		schema = map[string]any{}
+	}
+
+	// type
+	if t, ok := schema["type"].(string); !ok || strings.TrimSpace(t) == "" {
+		schema["type"] = "object"
+	}
+
+	// properties
+	if props, ok := schema["properties"].(map[string]any); ok && props != nil {
+		// keep
+	} else {
+		schema["properties"] = map[string]any{}
+	}
+
+	// required
+	req, exists := schema["required"]
+	if !exists || req == nil {
+		schema["required"] = []any{}
+	} else if arr, ok := req.([]any); ok {
+		cleaned := make([]any, 0, len(arr))
+		for _, v := range arr {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		schema["required"] = cleaned
+	} else {
+		schema["required"] = []any{}
+	}
+
+	// additionalProperties
+	switch schema["additionalProperties"].(type) {
+	case bool:
+		// keep
+	case map[string]any:
+		// keep
+	default:
+		schema["additionalProperties"] = true
+	}
+
+	return schema
+}
+
 // truncateParamName 截断超长参数名并返回截断后的名称
 // 截断规则：
 // - 超过80字符：取前20字符 + "_" + 后20字符
 // - 64-80字符：取前30字符 + "_param"
 func truncateParamName(paramName string) string {
-	if len(paramName) <= 64 {
+	// UTF-8 安全：按 rune 截断，避免中文等多字节字符造成 panic
+	runes := []rune(paramName)
+	if len(runes) <= 64 {
 		return paramName
 	}
-	if len(paramName) > 80 {
-		return paramName[:20] + "_" + paramName[len(paramName)-20:]
+	if len(runes) > 80 {
+		return string(runes[:20]) + "_" + string(runes[len(runes)-20:])
 	}
-	return paramName[:30] + "_param"
+	return string(runes[:30]) + "_param"
 }
 
 // cleanAndValidateToolParametersWithMapping 清理和验证工具参数，并返回参数名映射
@@ -174,13 +228,15 @@ func cleanAndValidateToolParametersWithMapping(params map[string]any, toolName s
 	}
 
 	// 移除不支持的顶级字段
-	delete(tempParams, "additionalProperties")
 	delete(tempParams, "strict")
 	delete(tempParams, "$schema")
 	delete(tempParams, "$id")
 	delete(tempParams, "$ref")
 	delete(tempParams, "definitions")
 	delete(tempParams, "$defs")
+
+	// 规范化 schema（对齐 kiro.rs normalize_json_schema）
+	tempParams = normalizeJsonSchema(tempParams)
 
 	// 处理超长参数名 - CodeWhisperer限制参数名长度；保留原名映射
 	if properties, ok := tempParams["properties"].(map[string]any); ok {

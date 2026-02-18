@@ -20,15 +20,18 @@ const (
 var modelAccessByLevel = map[AccountLevel][]string{
 	AccountLevelFree: {
 		config.CanonicalModelSonnet45,
+		config.CanonicalModelSonnet46,
 		config.CanonicalModelHaiku45,
 	},
 	AccountLevelPro: {
 		config.CanonicalModelSonnet45,
+		config.CanonicalModelSonnet46,
 		config.CanonicalModelHaiku45,
 		config.CanonicalModelOpus45,
 	},
 	AccountLevelEnterprise: {
 		config.CanonicalModelSonnet45,
+		config.CanonicalModelSonnet46,
 		config.CanonicalModelHaiku45,
 		config.CanonicalModelOpus45,
 		config.CanonicalModelOpus46,

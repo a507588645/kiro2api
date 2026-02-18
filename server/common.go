@@ -300,7 +300,7 @@ func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReque
 		logger.Int("tools_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools)),
 		logger.String("tools_names", toolNamesPreview))
 
-	req, err := http.NewRequest("POST", config.CodeWhispererURL, bytes.NewReader(cwReqBody))
+	req, err := http.NewRequest("POST", config.GetCodeWhispererURL(), bytes.NewReader(cwReqBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -318,6 +318,7 @@ func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	req.Header.Set("x-amzn-codewhisperer-optout", "true")        // 借鉴 kiro.rs
 	req.Header.Set("amz-sdk-invocation-id", uuid.New().String()) // 借鉴 kiro.rs：请求追踪ID
 	req.Header.Set("amz-sdk-request", "attempt=1; max=3")        // 借鉴 kiro.rs：重试配置
+	req.Header.Set("Host", config.GetCodeWhispererHost())         // 与 kiro.rs 对齐：设置 Host 头
 
 	// 使用指纹管理器获取随机化的请求头
 	fingerprint := getRequestFingerprint(c)
@@ -330,9 +331,9 @@ func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReque
 			logger.String("locale", fingerprint.Locale),
 			logger.String("sdk", fingerprint.SDKVersion))
 	} else {
-		// 降级到默认值（借鉴 kiro.rs 升级 SDK 版本）
-		req.Header.Set("x-amz-user-agent", "aws-sdk-js/1.0.27 KiroIDE-0.8.0-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
-		req.Header.Set("user-agent", "aws-sdk-js/1.0.27 ua/2.1 os/darwin#25.0.0 lang/js md/nodejs#20.16.0 api/codewhispererstreaming#1.0.27 m/E KiroIDE-0.8.0-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
+		// 降级到默认值（与 kiro.rs 0.9.2 对齐）
+		req.Header.Set("x-amz-user-agent", "aws-sdk-js/1.0.27 KiroIDE-0.9.2-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
+		req.Header.Set("user-agent", "aws-sdk-js/1.0.27 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E KiroIDE-0.9.2-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1")
 		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 		req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 		req.Header.Set("Connection", "close") // 借鉴 kiro.rs 使用 close
