@@ -443,21 +443,27 @@ func TestConvertOpenAIContentToAnthropic_FilterWebSearchInHistory(t *testing.T) 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
-	// 转换后的内容应该过滤掉web_search，只保留text和calculator
+	// 转换后的内容不再过滤 web_search（服务端工具），保留 text + tool_use
 	resultArray, ok := result.([]any)
 	assert.True(t, ok)
-	assert.Len(t, resultArray, 2, "应该过滤掉web_search，只保留2个块")
+	assert.Len(t, resultArray, 3)
 
 	// 验证第一个是text块
 	block1, ok := resultArray[0].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "text", block1["type"])
 
-	// 验证第二个是calculator的tool_use块
+	// 验证第二个是web_search的tool_use块
 	block2, ok := resultArray[1].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "tool_use", block2["type"])
-	assert.Equal(t, "calculator", block2["name"])
+	assert.Equal(t, "web_search", block2["name"])
+
+	// 验证第三个是calculator的tool_use块
+	block3, ok := resultArray[2].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "tool_use", block3["type"])
+	assert.Equal(t, "calculator", block3["name"])
 }
 
 func TestConvertOpenAIContentToAnthropic_FilterWebSearchVariantInHistory(t *testing.T) {
@@ -481,13 +487,19 @@ func TestConvertOpenAIContentToAnthropic_FilterWebSearchVariantInHistory(t *test
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
-	// 转换后的内容应该过滤掉websearch变体，只保留text
+	// 转换后的内容不再过滤 websearch 变体（服务端工具），保留原块
 	resultArray, ok := result.([]any)
 	assert.True(t, ok)
-	assert.Len(t, resultArray, 1, "应该过滤掉websearch，只保留1个块")
+	assert.Len(t, resultArray, 2)
 
-	// 验证是text块
-	block, ok := resultArray[0].(map[string]any)
+	// 验证第一个是tool_use块
+	block1, ok := resultArray[0].(map[string]any)
 	assert.True(t, ok)
-	assert.Equal(t, "text", block["type"])
+	assert.Equal(t, "tool_use", block1["type"])
+	assert.Equal(t, "websearch", block1["name"])
+
+	// 验证第二个是text块
+	block2, ok := resultArray[1].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "text", block2["type"])
 }

@@ -159,17 +159,18 @@ func TestNewErrorMapper(t *testing.T) {
 
 	assert.NotNil(t, mapper)
 	assert.NotNil(t, mapper.strategies)
-	assert.Len(t, mapper.strategies, 8, "应该有8个策略")
+	assert.Len(t, mapper.strategies, 9, "应该有9个策略")
 
 	// 验证策略顺序
 	assert.IsType(t, &ContentLengthExceedsStrategy{}, mapper.strategies[0], "第一个应该是ContentLengthExceedsStrategy")
 	assert.IsType(t, &PaymentRequiredStrategy{}, mapper.strategies[1], "第二个应该是PaymentRequiredStrategy")
 	assert.IsType(t, &ForbiddenStrategy{}, mapper.strategies[2], "第三个应该是ForbiddenStrategy")
 	assert.IsType(t, &RateLimitStrategy{}, mapper.strategies[3], "第四个应该是RateLimitStrategy")
-	assert.IsType(t, &ValidationErrorStrategy{}, mapper.strategies[4], "第五个应该是ValidationErrorStrategy")
-	assert.IsType(t, &ServiceUnavailableStrategy{}, mapper.strategies[5], "第六个应该是ServiceUnavailableStrategy")
-	assert.IsType(t, &InternalErrorStrategy{}, mapper.strategies[6], "第七个应该是InternalErrorStrategy")
-	assert.IsType(t, &DefaultErrorStrategy{}, mapper.strategies[7], "第八个应该是DefaultErrorStrategy")
+	assert.IsType(t, &InputTooLongStrategy{}, mapper.strategies[4], "第五个应该是InputTooLongStrategy")
+	assert.IsType(t, &ValidationErrorStrategy{}, mapper.strategies[5], "第六个应该是ValidationErrorStrategy")
+	assert.IsType(t, &ServiceUnavailableStrategy{}, mapper.strategies[6], "第七个应该是ServiceUnavailableStrategy")
+	assert.IsType(t, &InternalErrorStrategy{}, mapper.strategies[7], "第八个应该是InternalErrorStrategy")
+	assert.IsType(t, &DefaultErrorStrategy{}, mapper.strategies[8], "第九个应该是DefaultErrorStrategy")
 }
 
 // TestErrorMapper_MapCodeWhispererError 测试映射CodeWhisperer错误

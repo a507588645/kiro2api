@@ -194,6 +194,33 @@ func (s *ContentLengthExceedsStrategy) ShouldMarkTokenFailed() bool {
 	return false
 }
 
+// InputTooLongStrategy 输入过长错误策略
+// 场景：上游返回 "Input is too long"，返回 400 而非 502（参考 kiro.rs）
+type InputTooLongStrategy struct{}
+
+func (s *InputTooLongStrategy) CanHandle(statusCode int, responseBody []byte) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	var errorBody CodeWhispererErrorBody
+	if err := json.Unmarshal(responseBody, &errorBody); err != nil {
+		return false
+	}
+	return strings.Contains(errorBody.Message, "Input is too long")
+}
+
+func (s *InputTooLongStrategy) MapError(_ int, _ []byte) *ClaudeErrorResponse {
+	return &ClaudeErrorResponse{
+		Type:       "error",
+		Code:       "invalid_request_error",
+		Message:    "Input is too long. Reduce the size of your messages.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func (s *InputTooLongStrategy) GetStrategyName() string    { return "input_too_long" }
+func (s *InputTooLongStrategy) ShouldMarkTokenFailed() bool { return false }
+
 // ValidationErrorStrategy 请求验证错误策略
 // 场景：400 Bad Request（非内容长度超限）
 type ValidationErrorStrategy struct{}
@@ -337,6 +364,7 @@ func NewErrorMapper() *ErrorMapper {
 			&PaymentRequiredStrategy{},      // 402 月度配额耗尽
 			&ForbiddenStrategy{},            // 403 Token 失效
 			&RateLimitStrategy{},            // 429 限流
+			&InputTooLongStrategy{},         // 400 输入过长（参考 kiro.rs）
 			&ValidationErrorStrategy{},      // 400 验证错误
 			&ServiceUnavailableStrategy{},   // 503 服务不可用
 			&InternalErrorStrategy{},        // 500 内部错误

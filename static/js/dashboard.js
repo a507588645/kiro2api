@@ -151,7 +151,7 @@ class TokenDashboard {
             const isActive = this.activeToken && this.getTokenId(this.activeToken) === tokenId;
             
             return `
-                <tr class="${isActive ? 'active-row' : ''}" onclick="dashboard.handleRowClick(event, '${tokenId}')">
+                <tr class="${[isActive ? 'active-row' : '', token.disabled ? 'row-disabled' : ''].filter(Boolean).join(' ')}" onclick="dashboard.handleRowClick(event, '${tokenId}')">
                     <td class="checkbox-col" onclick="event.stopPropagation()">
                         <div class="custom-checkbox">
                             <input type="checkbox" id="cb_${tokenId}" 
@@ -217,8 +217,11 @@ class TokenDashboard {
         
         let status = 'active';
         let text = '正常';
-        
-        if (expires < now) {
+
+        if (token.disabled) {
+            status = 'exhausted';
+            text = '已禁用';
+        } else if (expires < now) {
             status = 'expired';
             text = '已过期';
         } else if (remaining === 0) {
@@ -336,6 +339,9 @@ class TokenDashboard {
                         ${machineId ? `
                             <button class="btn btn-ghost btn-xs" onclick="navigator.clipboard.writeText('${machineId}')">
                                 <i class="ri-file-copy-line"></i> 复制
+                            </button>
+                            <button class="btn btn-danger btn-xs" onclick="dashboard.deleteMachineId('${bindingKey}')">
+                                <i class="ri-delete-bin-line"></i> 解绑
                             </button>
                         ` : ''}
                     </div>
@@ -476,6 +482,24 @@ class TokenDashboard {
         document.getElementById('machineIdInput').value = uuid;
     }
     
+
+    async deleteMachineId(bindingKey) {
+        if (!confirm('确定要解绑机器码吗？')) return;
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/machine-ids/${encodeURIComponent(bindingKey)}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                delete this.machineIdBindings[bindingKey];
+                this.showToast('机器码已解绑', 'success');
+                await this.refreshTokens();
+            } else {
+                this.showToast(data.message || '解绑失败', 'error');
+            }
+        } catch (e) {
+            this.showToast('解绑失败: ' + e.message, 'error');
+        }
+    }
+
     async copyMachineId() {
         const val = document.getElementById('machineIdInput').value;
         if (val) {
@@ -624,6 +648,8 @@ class TokenDashboard {
     updateStatusBar(data) {
         this.animateValue('totalTokens', data.total_tokens || 0);
         this.animateValue('activeTokens', data.active_tokens || 0);
+        const expired = (data.tokens || this.tokens).filter(t => new Date(t.expires_at) < new Date()).length;
+        this.animateValue('expiredTokens', expired);
     }
 
     updateLastUpdateTime() {
@@ -688,9 +714,16 @@ class TokenDashboard {
     }
 
     showToast(msg, type = 'info') {
-        // Simple alert for now, could be a nice toast UI
-        // alert(msg);
-        console.log(`[${type.toUpperCase()}] ${msg}`);
+        const icons = { success: 'ri-checkbox-circle-line', error: 'ri-error-warning-line', warning: 'ri-alert-line', info: 'ri-information-line' };
+        const container = document.getElementById('toastContainer');
+        const el = document.createElement('div');
+        el.className = `toast toast-${type}`;
+        el.innerHTML = `<i class="${icons[type] || icons.info}"></i><span>${msg}</span>`;
+        container.appendChild(el);
+        setTimeout(() => {
+            el.classList.add('toast-out');
+            el.addEventListener('animationend', () => el.remove());
+        }, 3000);
     }
 }
 

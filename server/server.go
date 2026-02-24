@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -230,27 +229,30 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 			return
 		}
 
+		// 静默丢弃 assistant prefill（参考 kiro.rs fix #72）
+		if anthropicReq.Messages[len(anthropicReq.Messages)-1].Role == "assistant" {
+			logger.Debug("静默丢弃 assistant prefill 消息")
+			anthropicReq.Messages = anthropicReq.Messages[:len(anthropicReq.Messages)-1]
+			if len(anthropicReq.Messages) == 0 {
+				respondError(c, http.StatusBadRequest, "%s", "messages 数组不能为空")
+				return
+			}
+		}
+
 		// 验证最后一条消息有有效内容
 		lastMsg := anthropicReq.Messages[len(anthropicReq.Messages)-1]
 		content, err := utils.GetMessageContent(lastMsg.Content)
-		if err != nil {
-			logger.Error("获取消息内容失败",
-				logger.Err(err),
-				logger.String("raw_content", fmt.Sprintf("%v", lastMsg.Content)))
-			respondError(c, http.StatusBadRequest, "获取消息内容失败: %v", err)
-			return
-		}
-
-		trimmedContent := strings.TrimSpace(content)
-		if trimmedContent == "" || trimmedContent == "answer for user question" {
-			logger.Error("消息内容为空或无效",
-				logger.String("content", content),
-				logger.String("trimmed_content", trimmedContent))
+		if err != nil || strings.TrimSpace(content) == "" || strings.TrimSpace(content) == "answer for user question" {
 			respondError(c, http.StatusBadRequest, "%s", "消息内容不能为空")
 			return
 		}
 
 		if anthropicReq.Stream {
+			// 检测纯 WebSearch 请求（参考 kiro.rs）
+			if hasWebSearchTool(anthropicReq) {
+				handleWebSearchRequest(c, anthropicReq, tokenInfo)
+				return
+			}
 			// 当启用会话池时，使用带重试的处理器
 			if config.SessionPoolEnabled {
 				handleStreamRequestWithRetry(c, anthropicReq)
