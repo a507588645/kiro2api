@@ -76,6 +76,11 @@ class TokenDashboard {
             batchMachineIdBtn.addEventListener('click', () => this.batchGenerateMachineIds());
         }
 
+        const batchDisableBtn = document.getElementById('batchDisableBtn');
+        if (batchDisableBtn) {
+            batchDisableBtn.addEventListener('click', () => this.batchToggleDisable());
+        }
+
         // 导入
         const importBtn = document.getElementById('importBtn');
         const importFile = document.getElementById('importFile');
@@ -218,8 +223,8 @@ class TokenDashboard {
         let status = 'active';
         let text = '正常';
 
-        if (token.disabled) {
-            status = 'exhausted';
+        if (token.disabled || token.status === 'disabled') {
+            status = 'disabled';
             text = '已禁用';
         } else if (expires < now) {
             status = 'expired';
@@ -380,14 +385,14 @@ class TokenDashboard {
                 }
             });
         }
-        
+
         // Update all checkboxes
         document.querySelectorAll('.checkbox-col input[type="checkbox"]').forEach(cb => {
             if (cb.id !== 'selectAll' && !cb.disabled) {
                 cb.checked = checked;
             }
         });
-        
+
         this.updateSelectionUI();
     }
 
@@ -405,18 +410,33 @@ class TokenDashboard {
     updateSelectionUI() {
         const count = this.selectedTokens.size;
         this.ui.selectedCount.textContent = count;
-        
+
         if (count > 0) {
             this.ui.batchActions.style.display = 'flex';
         } else {
             this.ui.batchActions.style.display = 'none';
         }
-        
+
         // Update Select All Checkbox State
         const deletableCount = this.tokens.filter(t => t.deletable).length;
         if (this.ui.selectAll) {
             this.ui.selectAll.checked = count > 0 && count === deletableCount;
             this.ui.selectAll.indeterminate = count > 0 && count < deletableCount;
+        }
+
+        // 更新禁用/启用按钮文字（仅基于 OAuth token 计算，env token 不可禁用）
+        const selectedOAuthTokens = this.tokens.filter(t => this.selectedTokens.has(this.getTokenId(t)) && t.oauth_id);
+        const allDisabled = selectedOAuthTokens.length > 0 && selectedOAuthTokens.every(t => t.disabled);
+        const disableBtnText = document.getElementById('batchDisableBtnText');
+        const disableBtn = document.getElementById('batchDisableBtn');
+        if (disableBtnText && disableBtn) {
+            if (allDisabled) {
+                disableBtnText.textContent = '启用';
+                disableBtn.querySelector('i').className = 'ri-checkbox-circle-line';
+            } else {
+                disableBtnText.textContent = '禁用';
+                disableBtn.querySelector('i').className = 'ri-forbid-line';
+            }
         }
     }
 
@@ -598,9 +618,9 @@ class TokenDashboard {
     async batchDeleteTokens() {
         const ids = Array.from(this.selectedTokens);
         if (ids.length === 0) return;
-        
+
         if (!confirm(`确定要删除选中的 ${ids.length} 个 Token 吗？`)) return;
-        
+
         // Note: The backend API for batch delete might need to be adjusted to accept binding_keys or oauth_ids
         // Assuming here we filter tokens to get oauth_ids for the API
         const oauthIds = this.tokens
@@ -614,7 +634,7 @@ class TokenDashboard {
                 body: JSON.stringify({ token_ids: oauthIds }) // API expects 'token_ids' which are oauth_ids
             });
             const data = await res.json();
-            
+
             if (data.success) {
                 this.showToast(`成功删除 ${data.deleted_count} 个 Token`, 'success');
                 this.selectedTokens.clear();
@@ -624,6 +644,50 @@ class TokenDashboard {
             }
         } catch (e) {
             alert('批量删除失败: ' + e.message);
+        }
+    }
+
+    async batchToggleDisable() {
+        const ids = Array.from(this.selectedTokens);
+        if (ids.length === 0) return;
+
+        // 获取选中的 OAuth token
+        const selectedTokensList = this.tokens.filter(t => ids.includes(this.getTokenId(t)) && t.oauth_id);
+        if (selectedTokensList.length === 0) {
+            this.showToast('选中的账号不支持禁用操作', 'warning');
+            return;
+        }
+
+        // 判断目标状态：若所有选中均已禁用则启用，否则禁用
+        const allDisabled = selectedTokensList.every(t => t.disabled);
+        const targetDisabled = !allDisabled;
+        const action = targetDisabled ? '禁用' : '启用';
+
+        if (!confirm(`确定要${action}选中的 ${selectedTokensList.length} 个账号吗？\n（${action}后账号后台刷新不会停止）`)) return;
+
+        const oauthIds = selectedTokensList.map(t => t.oauth_id);
+
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/oauth/tokens/batch-disable`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token_ids: oauthIds, disabled: targetDisabled })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                this.showToast(`成功${action} ${data.success_count} 个账号`, 'success');
+                this.selectedTokens.clear();
+                this.refreshTokens();
+            } else {
+                const msg = data.failed_count > 0
+                    ? `${action}完成：成功 ${data.success_count}，失败 ${data.failed_count}`
+                    : `${action}失败`;
+                this.showToast(msg, data.success_count > 0 ? 'warning' : 'error');
+                this.refreshTokens();
+            }
+        } catch (e) {
+            this.showToast(`${action}失败: ` + e.message, 'error');
         }
     }
 

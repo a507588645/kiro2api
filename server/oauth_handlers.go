@@ -26,6 +26,7 @@ func RegisterOAuthRoutes(r *gin.Engine) {
 	r.GET("/api/oauth/tokens", handleOAuthTokens)
 	r.DELETE("/api/oauth/tokens/:id", handleDeleteOAuthToken)
 	r.POST("/api/oauth/tokens/batch-delete", handleBatchDeleteOAuthTokens)
+	r.POST("/api/oauth/tokens/batch-disable", handleBatchToggleDisableOAuthTokens)
 	r.POST("/api/import-accounts", handleImportAccounts)
 
 	logger.Info("OAuth routes registered")
@@ -401,4 +402,89 @@ func handleBatchDeleteOAuthTokens(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// BatchDisableRequest 批量禁用/启用请求结构体
+type BatchDisableRequest struct {
+	TokenIDs []string `json:"token_ids" binding:"required"`
+	Disabled bool     `json:"disabled"`
+}
+
+// BatchDisableResult 单个 Token 禁用/启用结果
+type BatchDisableResult struct {
+	ID       string `json:"id"`
+	Success  bool   `json:"success"`
+	Disabled bool   `json:"disabled"`
+	Error    string `json:"error,omitempty"`
+}
+
+// BatchDisableResponse 批量禁用/启用响应结构体
+type BatchDisableResponse struct {
+	Success      bool                 `json:"success"`
+	Results      []BatchDisableResult `json:"results"`
+	SuccessCount int                  `json:"success_count"`
+	FailedCount  int                  `json:"failed_count"`
+}
+
+// handleBatchToggleDisableOAuthTokens 批量禁用/启用 OAuth Token
+func handleBatchToggleDisableOAuthTokens(c *gin.Context) {
+	var req BatchDisableRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的请求格式"})
+		return
+	}
+
+	if len(req.TokenIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请选择要操作的Token"})
+		return
+	}
+
+	store := auth.GetOAuthTokenStore()
+	results := make([]BatchDisableResult, 0, len(req.TokenIDs))
+	successCount := 0
+	failedCount := 0
+
+	for _, tokenID := range req.TokenIDs {
+		result := BatchDisableResult{
+			ID:       tokenID,
+			Disabled: req.Disabled,
+		}
+
+		if err := store.SetTokenDisabled(tokenID, req.Disabled); err != nil {
+			logger.Error("批量禁用/启用OAuth token失败", logger.Err(err), logger.String("id", tokenID))
+			result.Error = err.Error()
+			result.Success = false
+			failedCount++
+		} else {
+			result.Success = true
+			successCount++
+		}
+
+		results = append(results, result)
+	}
+
+	// 操作成功后重载 TokenManager
+	if successCount > 0 {
+		if as := auth.GetGlobalAuthService(); as != nil {
+			if err := as.ReloadTokens(); err != nil {
+				logger.Warn("重载TokenManager失败", logger.Err(err))
+			}
+		}
+	}
+
+	action := "启用"
+	if req.Disabled {
+		action = "禁用"
+	}
+	logger.Info("批量"+action+"OAuth token完成",
+		logger.Int("success_count", successCount),
+		logger.Int("failed_count", failedCount))
+
+	c.JSON(http.StatusOK, BatchDisableResponse{
+		Success:      failedCount == 0,
+		Results:      results,
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
+	})
 }

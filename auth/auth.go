@@ -162,15 +162,25 @@ func (as *AuthService) GetAvailableModels() []string {
 	return as.tokenManager.ListAvailableModels()
 }
 
-// ReloadTokens 重新加载 token 配置（OAuth token 添加后调用）
+// ReloadTokens 重新加载 token 配置（OAuth token 添加/禁用后调用）
 func (as *AuthService) ReloadTokens() error {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
-	configs := GetOAuthTokenStore().ToAuthConfigs()
+	// 使用 GetConfigs 合并 env + oauth 配置，避免丢失环境变量账号
+	configs, err := GetConfigs()
+	if err != nil {
+		return fmt.Errorf("重载配置失败: %w", err)
+	}
 	if len(configs) == 0 {
 		return fmt.Errorf("没有可用的 token")
 	}
+
+	// 停止旧 TokenManager 的后台任务
+	if as.tokenManager != nil {
+		as.tokenManager.Stop()
+	}
+
 	as.tokenManager = NewTokenManager(configs)
 	as.configs = configs
 	logger.Info("TokenManager 已重载", logger.Int("count", len(configs)))

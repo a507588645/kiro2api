@@ -170,7 +170,8 @@ func (m *SessionTokenPoolManager) GetAvailableTokenForModel(sessionID, requested
 	// 检查主账号
 	if pool.PrimaryToken != nil && pool.PrimaryToken.Status == TokenStatusAvailable {
 		if now.After(pool.PrimaryToken.CooldownUntil) &&
-			m.tokenSupportsModel(pool.PrimaryToken.TokenKey, requestedModel) {
+			m.tokenSupportsModel(pool.PrimaryToken.TokenKey, requestedModel) &&
+			!m.tokenIsDisabled(pool.PrimaryToken.TokenKey) {
 			pool.PrimaryToken.LastUsedAt = now
 			pool.mutex.Unlock()
 			return pool.PrimaryToken.Token, pool.PrimaryToken.Fingerprint, pool.PrimaryToken.TokenKey, nil
@@ -181,7 +182,8 @@ func (m *SessionTokenPoolManager) GetAvailableTokenForModel(sessionID, requested
 	for _, backup := range pool.BackupTokens {
 		if backup.Status == TokenStatusAvailable &&
 			now.After(backup.CooldownUntil) &&
-			m.tokenSupportsModel(backup.TokenKey, requestedModel) {
+			m.tokenSupportsModel(backup.TokenKey, requestedModel) &&
+			!m.tokenIsDisabled(backup.TokenKey) {
 			backup.LastUsedAt = now
 			pool.mutex.Unlock()
 			return backup.Token, backup.Fingerprint, backup.TokenKey, nil
@@ -349,7 +351,8 @@ func (m *SessionTokenPoolManager) GetNextAvailableTokenForModel(sessionID, curre
 	if pool.PrimaryToken != nil && pool.PrimaryToken.TokenKey != currentTokenKey {
 		if pool.PrimaryToken.Status == TokenStatusAvailable &&
 			now.After(pool.PrimaryToken.CooldownUntil) &&
-			m.tokenSupportsModel(pool.PrimaryToken.TokenKey, requestedModel) {
+			m.tokenSupportsModel(pool.PrimaryToken.TokenKey, requestedModel) &&
+			!m.tokenIsDisabled(pool.PrimaryToken.TokenKey) {
 			pool.mutex.RUnlock()
 			return pool.PrimaryToken.Token, pool.PrimaryToken.Fingerprint, pool.PrimaryToken.TokenKey, nil
 		}
@@ -360,7 +363,8 @@ func (m *SessionTokenPoolManager) GetNextAvailableTokenForModel(sessionID, curre
 		if backup.TokenKey != currentTokenKey &&
 			backup.Status == TokenStatusAvailable &&
 			now.After(backup.CooldownUntil) &&
-			m.tokenSupportsModel(backup.TokenKey, requestedModel) {
+			m.tokenSupportsModel(backup.TokenKey, requestedModel) &&
+			!m.tokenIsDisabled(backup.TokenKey) {
 			pool.mutex.RUnlock()
 			return backup.Token, backup.Fingerprint, backup.TokenKey, nil
 		}
@@ -427,6 +431,14 @@ func (m *SessionTokenPoolManager) tokenSupportsModel(tokenKey, requestedModel st
 		return true
 	}
 	return m.tokenManager.IsTokenAllowedForModel(tokenKey, requestedModel)
+}
+
+// tokenIsDisabled 检查 token 是否被临时禁用
+func (m *SessionTokenPoolManager) tokenIsDisabled(tokenKey string) bool {
+	if m.tokenManager == nil {
+		return false
+	}
+	return m.tokenManager.isTokenDisabled(tokenKey)
 }
 
 // cleanupLoop 定期清理过期会话池

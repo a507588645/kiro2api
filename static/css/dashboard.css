@@ -495,6 +495,7 @@ tbody tr.active-row td {
 .status-expired { background: var(--danger-bg); color: var(--danger); }
 .status-low { background: var(--warning-bg); color: var(--warning); }
 .status-exhausted { background: var(--neutral-bg); color: var(--neutral); }
+.status-disabled { background: rgba(100, 100, 120, 0.15); color: #9ca3af; border: 1px solid rgba(100, 100, 120, 0.3); }
 
 .action-btn-group {
     display: flex;
@@ -659,6 +660,15 @@ tbody tr.active-row td {
 }
 .btn-danger:hover {
     background: rgba(239, 68, 68, 0.2);
+}
+
+.btn-warning {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.3);
+}
+.btn-warning:hover {
+    background: rgba(245, 158, 11, 0.2);
 }
 
 .btn-ghost {

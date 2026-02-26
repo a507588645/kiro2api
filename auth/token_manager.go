@@ -45,13 +45,13 @@ type SimpleTokenCache struct {
 
 // CachedToken 缓存的token信息
 type CachedToken struct {
-	Token     types.TokenInfo
-	UsageInfo *types.UsageLimits
-	CachedAt  time.Time
-	LastUsed  time.Time
-	Available float64
-	// 账号等级（从 UsageInfo 识别）
+	Token        types.TokenInfo
+	UsageInfo    *types.UsageLimits
+	CachedAt     time.Time
+	LastUsed     time.Time
+	Available    float64
 	AccountLevel AccountLevel
+	Disabled     bool // 标记此 token 是否被临时禁用（依然刷新，但不分配给请求）
 }
 
 // NewSimpleTokenCache 创建简单的token缓存
@@ -135,10 +135,6 @@ func (tm *TokenManager) proactiveRefresh() {
 	refreshed := 0
 
 	for i, cfg := range tm.configs {
-		if cfg.Disabled {
-			continue
-		}
-
 		cacheKey := fmt.Sprintf(config.TokenCacheKeyFormat, i)
 		cached, exists := tm.cache.tokens[cacheKey]
 
@@ -179,6 +175,7 @@ func (tm *TokenManager) proactiveRefresh() {
 			CachedAt:     now,
 			Available:    available,
 			AccountLevel: accountLevel,
+			Disabled:     cfg.Disabled,
 		}
 
 		refreshed++
@@ -332,20 +329,22 @@ func (tm *TokenManager) GetTokenWithFingerprintForSessionAndModel(sessionID stri
 	// 尝试获取会话绑定的 Token
 	sessionManager := GetSessionTokenBindingManager()
 	if token, fingerprint, tokenKey, bound := sessionManager.GetSessionToken(sessionID); bound {
-		// 检查 Token 是否仍然有效，且满足当前模型限制
+		// 检查 Token 是否仍然有效，且满足当前模型限制，且未被禁用
 		modelAllowed := tm.IsTokenAllowedForModel(tokenKey, requestedModel)
-		if time.Now().Before(token.ExpiresAt) && modelAllowed {
+		isDisabled := tm.isTokenDisabled(tokenKey)
+		if time.Now().Before(token.ExpiresAt) && modelAllowed && !isDisabled {
 			logger.Debug("使用会话绑定的Token",
 				logger.String("session_id", sessionID),
 				logger.String("token_key", tokenKey))
 			return token, fingerprint, tokenKey, nil
 		}
 
-		// Token 已过期或不满足模型限制，解绑会话
+		// Token 已过期、不满足模型限制或已被禁用，解绑会话
 		sessionManager.UnbindSession(sessionID)
 		logger.Debug("会话绑定的Token不可用，重新分配",
 			logger.String("session_id", sessionID),
-			logger.Bool("model_allowed", modelAllowed))
+			logger.Bool("model_allowed", modelAllowed),
+			logger.Bool("is_disabled", isDisabled))
 	}
 
 	// 获取新 Token
@@ -534,6 +533,15 @@ func (tm *TokenManager) getAuthConfigByTokenKey(tokenKey string) (AuthConfig, bo
 	return tm.configs[index], true
 }
 
+// isTokenDisabled 检查指定 tokenKey 对应的 token 是否已被临时禁用
+func (tm *TokenManager) isTokenDisabled(tokenKey string) bool {
+	cfg, ok := tm.getAuthConfigByTokenKey(tokenKey)
+	if !ok {
+		return false
+	}
+	return cfg.Disabled
+}
+
 func (tm *TokenManager) getBindingKeyForToken(tokenKey string, cached *CachedToken) string {
 	if cfg, ok := tm.getAuthConfigByTokenKey(tokenKey); ok {
 		bindingKey := BuildMachineIdBindingKey(cfg)
@@ -648,6 +656,13 @@ func (tm *TokenManager) selectNextAvailableTokenForModelUnlocked(requestedModel 
 			continue
 		}
 
+		// 跳过被临时禁用的 token（依然刷新，但不分配给请求）
+		if cached.Disabled {
+			tm.advanceToNextToken()
+			tried++
+			continue
+		}
+
 		// 检查token是否可用
 		if !cached.IsUsable() {
 			tm.advanceToNextToken()
@@ -707,10 +722,6 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 	logger.Debug("开始刷新token缓存")
 
 	for i, cfg := range tm.configs {
-		if cfg.Disabled {
-			continue
-		}
-
 		// 刷新token
 		token, err := tm.refreshSingleToken(cfg)
 		if err != nil {
@@ -743,6 +754,7 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 			CachedAt:     time.Now(),
 			Available:    available,
 			AccountLevel: accountLevel,
+			Disabled:     cfg.Disabled,
 		}
 
 		logger.Debug("token缓存更新",

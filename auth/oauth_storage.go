@@ -29,6 +29,7 @@ type StoredToken struct {
 	Provider     string    `json:"provider"`
 	CreatedAt    time.Time `json:"createdAt"`
 	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
+	Disabled     bool      `json:"disabled,omitempty"`
 }
 
 var (
@@ -155,9 +156,29 @@ func (s *OAuthTokenStore) ToAuthConfigs() []AuthConfig {
 			Source:       "oauth",
 			OAuthID:      t.ID,
 			Deletable:    true,
+			Disabled:     t.Disabled,
 		}
 	}
 	return configs
+}
+
+// SetTokenDisabled 设置 token 的禁用状态（临时禁用，后台刷新不停止）
+func (s *OAuthTokenStore) SetTokenDisabled(id string, disabled bool) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for i, token := range s.Tokens {
+		if token.ID == id {
+			s.Tokens[i].Disabled = disabled
+			action := "启用"
+			if disabled {
+				action = "禁用"
+			}
+			logger.Info("OAuth token状态已更新", logger.String("id", id), logger.String("action", action))
+			return s.save()
+		}
+	}
+	return fmt.Errorf("未找到ID为 %s 的token", id)
 }
 
 func (s *OAuthTokenStore) load() {

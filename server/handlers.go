@@ -452,6 +452,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 				"last_used":       "未知",
 				"status":          "disabled",
+				"disabled":        true,
 				"error":           "配置已禁用",
 				"binding_key":     bindingKey,
 				// 删除相关字段
