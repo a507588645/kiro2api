@@ -58,7 +58,8 @@ COPY --from=builder /app/kiro2api .
 COPY --from=builder /app/static ./static
 
 # 创建必要的目录并设置权限
-RUN mkdir -p /home/appuser/.aws/sso/cache && \
+# 说明：/app/data 用于挂载 OAuth Token 文件等持久化数据（避免容器内路径不存在导致写入失败）
+RUN mkdir -p /home/appuser/.aws/sso/cache /app/data && \
     chown -R appuser:appgroup /app /home/appuser
 
 # 切换到非 root 用户

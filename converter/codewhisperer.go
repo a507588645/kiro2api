@@ -261,6 +261,27 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 		return cwReq, fmt.Errorf("消息列表为空")
 	}
 
+	// 预处理 assistant prefill：如果末尾不是 user，则静默丢弃并截断到最后一条 user
+	// 参考：kiro.rs fix #72 - Claude 4.x 已弃用 assistant prefill，Kiro API 也不支持
+	messages := anthropicReq.Messages
+	if strings.TrimSpace(messages[len(messages)-1].Role) != "user" {
+		lastUserIdx := -1
+		for i := len(messages) - 1; i >= 0; i-- {
+			if strings.TrimSpace(messages[i].Role) == "user" {
+				lastUserIdx = i
+				break
+			}
+		}
+		if lastUserIdx < 0 {
+			return cwReq, fmt.Errorf("消息列表为空")
+		}
+		logger.Info("检测到末尾 assistant 消息（prefill），静默丢弃",
+			logger.String("dropped_role", strings.TrimSpace(messages[len(messages)-1].Role)),
+			logger.Int("original_len", len(messages)),
+			logger.Int("new_len", lastUserIdx+1))
+		messages = messages[:lastUserIdx+1]
+	}
+
 	// 宽松模型归一化：兼容别名与家族匹配（对齐 kiro.rs）
 	resolvedModel, modelId, ok := config.ResolveModelID(anthropicReq.Model)
 	if !ok {
@@ -276,7 +297,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	}
 	anthropicReq.Model = resolvedModel
 
-	lastMessage := anthropicReq.Messages[len(anthropicReq.Messages)-1]
+	lastMessage := messages[len(messages)-1]
 
 	// 调试：记录原始消息内容
 	// logger.Debug("处理用户消息",
@@ -347,7 +368,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	}
 
 	// 构建历史消息
-	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 || len(anthropicReq.Tools) > 0 || anthropicReq.Thinking != nil {
+	if len(anthropicReq.System) > 0 || len(messages) > 1 || len(anthropicReq.Tools) > 0 || anthropicReq.Thinking != nil {
 		var history []any
 
 		// 生成 thinking 前缀（借鉴 kiro.rs，支持 adaptive 模式）
@@ -406,132 +427,67 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 				logger.String("prefix", thinkingPrefix))
 		}
 
-		// 然后处理常规消息历史 (修复配对逻辑：合并连续user消息，然后与assistant配对)
-		// 关键修复：收集连续的user消息并合并，遇到assistant时配对添加
-		var userMessagesBuffer []types.AnthropicRequestMessage // 累积连续的user消息
+		// 然后处理常规消息历史
+		// - 最后一条消息作为 currentMessage，不加入历史
+		// - 修复：合并连续 assistant 消息（避免上游 400，参考 kiro.rs Issue #79）
+		historyEndIndex := len(messages) - 1
 
-		for i := 0; i < len(anthropicReq.Messages)-1; i++ {
-			msg := anthropicReq.Messages[i]
+		var userBuffer []*types.AnthropicRequestMessage
+		var assistantBuffer []*types.AnthropicRequestMessage
 
-			if msg.Role == "user" {
-				// 收集user消息到缓冲区
-				userMessagesBuffer = append(userMessagesBuffer, msg)
-				continue
+		flushUsers := func() {
+			if len(userBuffer) == 0 {
+				return
 			}
-			if msg.Role == "assistant" {
-				// 遇到assistant，处理之前累积的user消息
-				if len(userMessagesBuffer) > 0 {
-					// 合并所有累积的user消息
-					mergedUserMsg := types.HistoryUserMessage{}
-					var contentParts []string
-					var allImages []types.CodeWhispererImage
-					var allToolResults []types.ToolResult
-
-					for _, userMsg := range userMessagesBuffer {
-						// 处理每个user消息的内容和图片
-						messageContent, messageImages, err := processMessageContent(userMsg.Content)
-						if err == nil && messageContent != "" {
-							contentParts = append(contentParts, messageContent)
-							if len(messageImages) > 0 {
-								allImages = append(allImages, messageImages...)
-							}
-						}
-
-						// 收集工具结果
-						toolResults := extractToolResultsFromMessage(userMsg.Content)
-						if len(toolResults) > 0 {
-							allToolResults = append(allToolResults, toolResults...)
-						}
-					}
-
-					// 设置合并后的内容
-					mergedUserMsg.UserInputMessage.Content = strings.Join(contentParts, "\n")
-					if len(allImages) > 0 {
-						mergedUserMsg.UserInputMessage.Images = allImages
-					}
-					if len(allToolResults) > 0 {
-						mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
-						// logger.Debug("历史用户消息包含工具结果",
-						// 	logger.Int("merged_messages", len(userMessagesBuffer)),
-						// 	logger.Int("tool_results_count", len(allToolResults)))
-					}
-
-					mergedUserMsg.UserInputMessage.ModelId = modelId
-					mergedUserMsg.UserInputMessage.Origin = "AI_EDITOR"
-					history = append(history, mergedUserMsg)
-
-					// 清空缓冲区
-					userMessagesBuffer = nil
-				}
-
-				// 添加assistant消息
-				assistantMsg := types.HistoryAssistantMessage{}
-				assistantContent, err := utils.GetMessageContent(msg.Content)
-				if err == nil {
-					assistantMsg.AssistantResponseMessage.Content = assistantContent
-				} else {
-					assistantMsg.AssistantResponseMessage.Content = ""
-				}
-
-				// 提取助手消息中的工具调用
-				toolUses := extractToolUsesFromMessage(msg.Content)
-				if len(toolUses) > 0 {
-					assistantMsg.AssistantResponseMessage.ToolUses = toolUses
-					// 仅包含 tool_use 时，Kiro 要求 assistant content 非空
-					if strings.TrimSpace(assistantMsg.AssistantResponseMessage.Content) == "" ||
-						assistantMsg.AssistantResponseMessage.Content == "answer for user question" {
-						assistantMsg.AssistantResponseMessage.Content = " "
-					}
-				} else {
-					assistantMsg.AssistantResponseMessage.ToolUses = nil
-				}
-
-				history = append(history, assistantMsg)
-			}
+			mergedUserMsg := mergeHistoryUserMessages(userBuffer, modelId)
+			history = append(history, mergedUserMsg)
+			userBuffer = nil
 		}
 
-		// 处理结尾的孤立user消息（理论上不应该存在，因为最后一条已经是current message）
-		// 修复：合并孤立的user消息并添加占位assistant回复以保持配对
-		if len(userMessagesBuffer) > 0 {
-			// 合并所有孤立的user消息
-			mergedUserMsg := types.HistoryUserMessage{}
-			var contentParts []string
-			var allImages []types.CodeWhispererImage
-			var allToolResults []types.ToolResult
+		flushAssistants := func() {
+			if len(assistantBuffer) == 0 {
+				return
+			}
+			mergedAssistant := mergeAssistantMessagesToHistory(assistantBuffer)
+			appendHistoryAssistantMessage(&history, mergedAssistant)
+			assistantBuffer = nil
+		}
 
-			for _, userMsg := range userMessagesBuffer {
-				messageContent, messageImages, err := processMessageContent(userMsg.Content)
-				if err == nil && messageContent != "" {
-					contentParts = append(contentParts, messageContent)
-					if len(messageImages) > 0 {
-						allImages = append(allImages, messageImages...)
-					}
-				}
-				toolResults := extractToolResultsFromMessage(userMsg.Content)
-				if len(toolResults) > 0 {
-					allToolResults = append(allToolResults, toolResults...)
-				}
+		for i := 0; i < historyEndIndex; i++ {
+			msg := &messages[i]
+			role := strings.TrimSpace(msg.Role)
+
+			if role == "assistant" {
+				flushUsers()
+				assistantBuffer = append(assistantBuffer, msg)
+				continue
 			}
 
-			mergedUserMsg.UserInputMessage.Content = strings.Join(contentParts, "\n")
-			if len(allImages) > 0 {
-				mergedUserMsg.UserInputMessage.Images = allImages
+			// 将 system 等非 assistant 角色视作 user 消息处理，避免丢失指令/上下文
+			if role == "user" || role == "system" || role == "" {
+				flushAssistants()
+				userBuffer = append(userBuffer, msg)
+				continue
 			}
-			if len(allToolResults) > 0 {
-				mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
-			}
-			mergedUserMsg.UserInputMessage.ModelId = modelId
-			mergedUserMsg.UserInputMessage.Origin = "AI_EDITOR"
+
+			// 其他未知角色：跳过
+		}
+
+		// 处理末尾累积的 assistant 消息
+		flushAssistants()
+
+		// 处理结尾的孤立 user 消息：合并并补一个占位 assistant 回复以保持配对
+		if len(userBuffer) > 0 {
+			mergedUserMsg := mergeHistoryUserMessages(userBuffer, modelId)
 			history = append(history, mergedUserMsg)
 
-			// 添加占位的 assistant 回复以保持配对
 			assistantMsg := types.HistoryAssistantMessage{}
-			assistantMsg.AssistantResponseMessage.Content = "I will follow these instructions."
+			assistantMsg.AssistantResponseMessage.Content = "OK"
 			assistantMsg.AssistantResponseMessage.ToolUses = nil
-			history = append(history, assistantMsg)
+			appendHistoryAssistantMessage(&history, assistantMsg)
 
 			logger.Debug("为孤立的user消息添加了占位assistant回复",
-				logger.Int("orphan_messages", len(userMessagesBuffer)))
+				logger.Int("orphan_messages", len(userBuffer)))
 		}
 
 		cwReq.ConversationState.History = history
@@ -620,6 +576,262 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 	}
 
 	return cwReq, nil
+}
+
+// mergeHistoryUserMessages 合并连续的 user/system 消息为单条历史 user 消息。
+// - 会合并文本、图片与 tool_result
+// - history user message 的 content 允许为空（例如仅包含 tool_result 的反馈回合）
+func mergeHistoryUserMessages(messages []*types.AnthropicRequestMessage, modelId string) types.HistoryUserMessage {
+	mergedUserMsg := types.HistoryUserMessage{}
+	var contentParts []string
+	var allImages []types.CodeWhispererImage
+	var allToolResults []types.ToolResult
+
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+
+		messageContent, messageImages, err := processMessageContent(msg.Content)
+		if err == nil {
+			if messageContent != "" {
+				contentParts = append(contentParts, messageContent)
+			}
+			if len(messageImages) > 0 {
+				allImages = append(allImages, messageImages...)
+			}
+		}
+
+		toolResults := extractToolResultsFromMessage(msg.Content)
+		if len(toolResults) > 0 {
+			allToolResults = append(allToolResults, toolResults...)
+		}
+	}
+
+	mergedUserMsg.UserInputMessage.Content = strings.Join(contentParts, "\n")
+	if len(allImages) > 0 {
+		mergedUserMsg.UserInputMessage.Images = allImages
+	}
+	if len(allToolResults) > 0 {
+		mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
+	}
+
+	mergedUserMsg.UserInputMessage.ModelId = modelId
+	mergedUserMsg.UserInputMessage.Origin = "AI_EDITOR"
+	return mergedUserMsg
+}
+
+// extractThinkingAndTextFromAssistantContent 从 assistant 的 content 中提取 thinking/text 文本。
+// Anthropic thinking 块示例：{"type":"thinking","thinking":"..."}
+func extractThinkingAndTextFromAssistantContent(content any) (thinking string, text string) {
+	var thinkingBuilder strings.Builder
+	var textBuilder strings.Builder
+
+	switch v := content.(type) {
+	case string:
+		// 纯字符串 assistant 内容
+		textBuilder.WriteString(v)
+	case []any:
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			t, _ := m["type"].(string)
+			switch t {
+			case "thinking":
+				// 兼容字段名：thinking / text
+				if th, ok := m["thinking"].(string); ok {
+					thinkingBuilder.WriteString(th)
+				} else if th, ok := m["text"].(string); ok {
+					thinkingBuilder.WriteString(th)
+				}
+			case "text":
+				if tx, ok := m["text"].(string); ok {
+					textBuilder.WriteString(tx)
+				}
+			}
+		}
+	case []map[string]any:
+		for _, m := range v {
+			t, _ := m["type"].(string)
+			switch t {
+			case "thinking":
+				if th, ok := m["thinking"].(string); ok {
+					thinkingBuilder.WriteString(th)
+				} else if th, ok := m["text"].(string); ok {
+					thinkingBuilder.WriteString(th)
+				}
+			case "text":
+				if tx, ok := m["text"].(string); ok {
+					textBuilder.WriteString(tx)
+				}
+			}
+		}
+	case []types.ContentBlock:
+		// 结构化内容块（可能丢失 thinking 字段，仅保留 text）
+		for _, block := range v {
+			if block.Type == "text" && block.Text != nil {
+				textBuilder.WriteString(*block.Text)
+			}
+		}
+	}
+
+	return thinkingBuilder.String(), textBuilder.String()
+}
+
+// convertAssistantMessageToHistory 将单条 Anthropic assistant 消息转换为 Kiro history assistant 消息。
+// 修复：
+// - thinking 块转为 <thinking>...</thinking> 标签文本（与 kiro.rs 对齐）
+// - 仅 tool_use 时注入占位空格，避免上游 400
+func convertAssistantMessageToHistory(msg *types.AnthropicRequestMessage) types.HistoryAssistantMessage {
+	out := types.HistoryAssistantMessage{}
+
+	if msg == nil {
+		out.AssistantResponseMessage.Content = " "
+		out.AssistantResponseMessage.ToolUses = nil
+		return out
+	}
+
+	thinkingContent, textContent := extractThinkingAndTextFromAssistantContent(msg.Content)
+	toolUses := extractToolUsesFromMessage(msg.Content)
+
+	trimThinking := strings.TrimSpace(thinkingContent)
+	trimText := strings.TrimSpace(textContent)
+
+	finalContent := ""
+	if trimThinking != "" {
+		if trimText != "" {
+			finalContent = fmt.Sprintf("<thinking>%s</thinking>\n\n%s", thinkingContent, textContent)
+		} else {
+			finalContent = fmt.Sprintf("<thinking>%s</thinking>", thinkingContent)
+		}
+	} else if trimText == "" && len(toolUses) > 0 {
+		finalContent = " "
+	} else {
+		finalContent = textContent
+	}
+
+	// Kiro API 要求 content 字段不能为空；空内容降级为空格
+	if strings.TrimSpace(finalContent) == "" || finalContent == "answer for user question" {
+		finalContent = " "
+	}
+
+	out.AssistantResponseMessage.Content = finalContent
+	if len(toolUses) > 0 {
+		out.AssistantResponseMessage.ToolUses = toolUses
+	} else {
+		out.AssistantResponseMessage.ToolUses = nil
+	}
+
+	return out
+}
+
+// mergeAssistantMessagesToHistory 合并连续 assistant 消息为一条 history assistant（参考 kiro.rs Issue #79）。
+func mergeAssistantMessagesToHistory(messages []*types.AnthropicRequestMessage) types.HistoryAssistantMessage {
+	if len(messages) == 0 {
+		out := types.HistoryAssistantMessage{}
+		out.AssistantResponseMessage.Content = " "
+		out.AssistantResponseMessage.ToolUses = nil
+		return out
+	}
+	if len(messages) == 1 {
+		return convertAssistantMessageToHistory(messages[0])
+	}
+
+	var allToolUses []types.ToolUseEntry
+	var contentParts []string
+
+	for _, msg := range messages {
+		converted := convertAssistantMessageToHistory(msg)
+
+		if c := strings.TrimSpace(converted.AssistantResponseMessage.Content); c != "" && c != "answer for user question" {
+			contentParts = append(contentParts, converted.AssistantResponseMessage.Content)
+		}
+		if len(converted.AssistantResponseMessage.ToolUses) > 0 {
+			allToolUses = append(allToolUses, converted.AssistantResponseMessage.ToolUses...)
+		}
+	}
+
+	content := ""
+	if len(contentParts) == 0 {
+		// 只要落到 history，就尽量保证 content 非空，避免上游 400
+		content = " "
+	} else {
+		content = strings.Join(contentParts, "\n\n")
+	}
+
+	out := types.HistoryAssistantMessage{}
+	out.AssistantResponseMessage.Content = content
+	if len(allToolUses) > 0 {
+		out.AssistantResponseMessage.ToolUses = allToolUses
+	} else {
+		out.AssistantResponseMessage.ToolUses = nil
+	}
+
+	if strings.TrimSpace(out.AssistantResponseMessage.Content) == "" {
+		out.AssistantResponseMessage.Content = " "
+	}
+
+	return out
+}
+
+func mergeTwoHistoryAssistantMessages(a, b types.HistoryAssistantMessage) types.HistoryAssistantMessage {
+	var parts []string
+	if strings.TrimSpace(a.AssistantResponseMessage.Content) != "" && a.AssistantResponseMessage.Content != "answer for user question" {
+		parts = append(parts, a.AssistantResponseMessage.Content)
+	}
+	if strings.TrimSpace(b.AssistantResponseMessage.Content) != "" && b.AssistantResponseMessage.Content != "answer for user question" {
+		parts = append(parts, b.AssistantResponseMessage.Content)
+	}
+
+	var allToolUses []types.ToolUseEntry
+	if len(a.AssistantResponseMessage.ToolUses) > 0 {
+		allToolUses = append(allToolUses, a.AssistantResponseMessage.ToolUses...)
+	}
+	if len(b.AssistantResponseMessage.ToolUses) > 0 {
+		allToolUses = append(allToolUses, b.AssistantResponseMessage.ToolUses...)
+	}
+
+	out := types.HistoryAssistantMessage{}
+	out.AssistantResponseMessage.Content = strings.Join(parts, "\n\n")
+	if len(allToolUses) > 0 {
+		out.AssistantResponseMessage.ToolUses = allToolUses
+	} else {
+		out.AssistantResponseMessage.ToolUses = nil
+	}
+
+	if strings.TrimSpace(out.AssistantResponseMessage.Content) == "" {
+		out.AssistantResponseMessage.Content = " "
+	}
+
+	return out
+}
+
+// appendHistoryAssistantMessage 将 assistant history 追加到 history 中。
+// 如果出现连续 assistant（例如系统注入后又紧跟 assistant），则合并以避免上游 400。
+func appendHistoryAssistantMessage(history *[]any, assistant types.HistoryAssistantMessage) {
+	if history == nil {
+		return
+	}
+	if len(*history) == 0 {
+		*history = append(*history, assistant)
+		return
+	}
+
+	lastIdx := len(*history) - 1
+	switch prev := (*history)[lastIdx].(type) {
+	case types.HistoryAssistantMessage:
+		(*history)[lastIdx] = mergeTwoHistoryAssistantMessages(prev, assistant)
+		return
+	case *types.HistoryAssistantMessage:
+		if prev != nil {
+			*prev = mergeTwoHistoryAssistantMessages(*prev, assistant)
+			return
+		}
+	}
+
+	*history = append(*history, assistant)
 }
 
 // extractToolUsesFromMessage 从助手消息内容中提取工具调用

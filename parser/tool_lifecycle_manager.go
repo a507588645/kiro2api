@@ -3,6 +3,7 @@ package parser
 import (
 	"kiro2api/logger"
 	"kiro2api/utils"
+	"strings"
 	"time"
 )
 
@@ -38,8 +39,8 @@ func (tlm *ToolLifecycleManager) Reset() {
 	tlm.completedTools = make(map[string]*ToolExecution)
 	tlm.blockIndexMap = make(map[string]int)
 	tlm.nextBlockIndex = 1
-	tlm.textIntroGenerated = false  // 重置文本介绍生成状态
-	tlm.currentNestingDepth = 0     // 重置嵌套深度
+	tlm.textIntroGenerated = false // 重置文本介绍生成状态
+	tlm.currentNestingDepth = 0    // 重置嵌套深度
 }
 
 // HandleToolCallRequest 处理工具调用请求
@@ -68,8 +69,12 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 				logger.String("existing_status", existing.Status.String()))
 
 			// 解析工具调用参数
+			// 修复：空 arguments 不应触发 JSON 解析告警（参考 kiro.rs fix #75）
 			var arguments map[string]any
-			if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
+			argStr := strings.TrimSpace(toolCall.Function.Arguments)
+			if argStr == "" {
+				arguments = make(map[string]any)
+			} else if err := utils.SafeUnmarshal([]byte(argStr), &arguments); err != nil {
 				logger.Warn("解析工具调用参数失败",
 					logger.String("tool_id", toolCall.ID),
 					logger.String("tool_name", toolCall.Function.Name),
@@ -85,8 +90,12 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 		}
 
 		// 解析工具调用参数
+		// 修复：空 arguments 不应触发 JSON 解析告警（参考 kiro.rs fix #75）
 		var arguments map[string]any
-		if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
+		argStr := strings.TrimSpace(toolCall.Function.Arguments)
+		if argStr == "" {
+			arguments = make(map[string]any)
+		} else if err := utils.SafeUnmarshal([]byte(argStr), &arguments); err != nil {
 			logger.Warn("解析工具调用参数失败",
 				logger.String("tool_id", toolCall.ID),
 				logger.String("tool_name", toolCall.Function.Name),
@@ -118,7 +127,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 		// 策略调整：content_block_start 中不包含 input 参数，统一通过 delta 发送
 		// 这确保了下游转换为 OpenAI 格式时，始终遵循 "先头(无参)后体(参数delta)" 的标准流式模式
 		// 避免了部分客户端对 "头带参数" 处理不兼容的问题
-		
+
 		events = append(events, SSEEvent{
 			Event: "content_block_start",
 			Data: map[string]any{
@@ -629,6 +638,13 @@ func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments ma
 
 // UpdateToolArgumentsFromJSON 从JSON字符串更新工具调用参数
 func (tlm *ToolLifecycleManager) UpdateToolArgumentsFromJSON(toolID string, jsonArgs string) {
+	// 修复：空 JSON 不应触发解析告警（参考 kiro.rs fix #75）
+	// 一些客户端会发送空字符串或仅空白作为 arguments。
+	if strings.TrimSpace(jsonArgs) == "" {
+		tlm.UpdateToolArguments(toolID, map[string]any{})
+		return
+	}
+
 	var arguments map[string]any
 	if err := utils.SafeUnmarshal([]byte(jsonArgs), &arguments); err != nil {
 		logger.Warn("解析工具参数JSON失败",

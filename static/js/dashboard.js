@@ -342,7 +342,7 @@ class TokenDashboard {
                             <i class="ri-edit-line"></i> ${machineId ? '修改' : '绑定'}
                         </button>
                         ${machineId ? `
-                            <button class="btn btn-ghost btn-xs" onclick="navigator.clipboard.writeText('${machineId}')">
+                            <button class="btn btn-ghost btn-xs" onclick="dashboard.copyText('${this.escape(machineId)}')">
                                 <i class="ri-file-copy-line"></i> 复制
                             </button>
                             <button class="btn btn-danger btn-xs" onclick="dashboard.deleteMachineId('${bindingKey}')">
@@ -498,7 +498,7 @@ class TokenDashboard {
     }
 
     generateRandomMachineId() {
-        const uuid = crypto.randomUUID();
+        const uuid = this.generateUUID();
         document.getElementById('machineIdInput').value = uuid;
     }
     
@@ -522,10 +522,8 @@ class TokenDashboard {
 
     async copyMachineId() {
         const val = document.getElementById('machineIdInput').value;
-        if (val) {
-            await navigator.clipboard.writeText(val);
-            this.showToast('已复制到剪贴板');
-        }
+        if (!val) return;
+        await this.copyText(val);
     }
 
     async batchGenerateMachineIds() {
@@ -771,6 +769,75 @@ class TokenDashboard {
     truncate(str, len) {
         if (!str) return '';
         return str.length > len ? str.substring(0, len) + '...' : str;
+    }
+
+    generateUUID() {
+        // crypto.randomUUID / clipboard 等在 HTTP 非安全上下文可能不可用，提供兜底实现。
+        try {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+                return window.crypto.randomUUID();
+            }
+        } catch (e) { /* fallback */ }
+
+        try {
+            if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+                const buf = new Uint8Array(16);
+                window.crypto.getRandomValues(buf);
+                // RFC4122 v4
+                buf[6] = (buf[6] & 0x0f) | 0x40;
+                buf[8] = (buf[8] & 0x3f) | 0x80;
+                const hex = Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+                return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+            }
+        } catch (e) { /* fallback */ }
+
+        // 最后兜底：Math.random（不保证强随机性，但用于机器码占位足够）
+        const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+        return `${s4()}${s4()}-${s4()}-${s4()}-${s4()}-${s4()}${s4()}${s4()}`;
+    }
+
+    async copyText(text) {
+        const value = String(text ?? '');
+        if (!value) return false;
+
+        // 优先使用现代 Clipboard API
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            try {
+                await navigator.clipboard.writeText(value);
+                this.showToast('已复制到剪贴板', 'success');
+                return true;
+            } catch (e) {
+                // 在 HTTP 非安全上下文或权限受限场景下可能失败，继续走 fallback
+            }
+        }
+
+        // 兜底：execCommand('copy')，兼容 HTTP 非安全上下文
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = value;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            ta.style.top = '0';
+            document.body.appendChild(ta);
+
+            ta.focus();
+            ta.select();
+            ta.setSelectionRange(0, ta.value.length);
+
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+
+            if (ok) {
+                this.showToast('已复制到剪贴板', 'success');
+                return true;
+            }
+        } catch (e) {
+            // ignore
+        }
+
+        this.showToast('复制失败（HTTP 非安全上下文可尝试改用 https 或 localhost）', 'error');
+        return false;
     }
 
     escape(str) {

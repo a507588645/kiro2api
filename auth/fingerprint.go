@@ -50,10 +50,10 @@ type Fingerprint struct {
 
 // FingerprintManager 指纹管理器，每个token绑定固定指纹
 type FingerprintManager struct {
-	fingerprints    map[string]*Fingerprint
+	fingerprints      map[string]*Fingerprint
 	bindingMachineIds map[string]string // bindingKey -> machineId 绑定
-	mutex           sync.RWMutex
-	rng             *rand.Rand
+	mutex             sync.RWMutex
+	rng               *rand.Rand
 }
 
 var (
@@ -109,6 +109,7 @@ var nodeVersions = []string{
 var kiroVersions = []string{
 	"0.3.0", "0.3.1", "0.3.2", "0.3.3",
 	"0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0", "0.9.2",
+	"0.10.0",
 }
 
 // Accept-Language 组合（基于locale生成）
@@ -164,9 +165,9 @@ var cacheControlValues = []string{
 func GetFingerprintManager() *FingerprintManager {
 	fingerprintOnce.Do(func() {
 		globalFingerprintManager = &FingerprintManager{
-			fingerprints:     make(map[string]*Fingerprint),
+			fingerprints:      make(map[string]*Fingerprint),
 			bindingMachineIds: make(map[string]string),
-			rng:              rand.New(rand.NewSource(time.Now().UnixNano())),
+			rng:               rand.New(rand.NewSource(time.Now().UnixNano())),
 		}
 		// 加载已有的机器码绑定
 		globalFingerprintManager.loadMachineIdBindings()
