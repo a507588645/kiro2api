@@ -28,6 +28,7 @@ func RegisterOAuthRoutes(r *gin.Engine) {
 	r.POST("/api/oauth/tokens/batch-delete", handleBatchDeleteOAuthTokens)
 	r.POST("/api/oauth/tokens/batch-disable", handleBatchToggleDisableOAuthTokens)
 	r.POST("/api/import-accounts", handleImportAccounts)
+	r.GET("/api/export-accounts", handleExportAccounts)
 
 	logger.Info("OAuth routes registered")
 }
@@ -320,6 +321,19 @@ func handleImportAccounts(c *gin.Context) {
 		"errors":   errors,
 		"message":  fmt.Sprintf("成功导入 %d 个账号", imported),
 	})
+}
+
+// handleExportAccounts 处理账号导出
+func handleExportAccounts(c *gin.Context) {
+	export, err := auth.ExportAccounts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "导出失败: " + err.Error()})
+		return
+	}
+
+	filename := fmt.Sprintf("kiro-accounts-%s.json", time.Now().Format("20060102150405"))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	c.JSON(http.StatusOK, export)
 }
 
 // BatchDeleteRequest 批量删除请求结构体

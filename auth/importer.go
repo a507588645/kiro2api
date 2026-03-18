@@ -248,3 +248,39 @@ func normalizeEpochMillis(value int64) int64 {
 	}
 	return value
 }
+
+// ExportAccounts exports all stored accounts in a format compatible with ImportAccountsFromReader.
+func ExportAccounts() (*AccountExport, error) {
+	store := GetOAuthTokenStore()
+	tokens := store.GetTokens()
+	machineIdManager := GetMachineIdBindingManager()
+
+	export := &AccountExport{
+		Accounts: make([]Account, 0, len(tokens)),
+	}
+
+	for _, t := range tokens {
+		machineId := machineIdManager.GetMachineId("oauth:" + t.ID)
+
+		var expiresAt int64
+		if !t.ExpiresAt.IsZero() {
+			expiresAt = t.ExpiresAt.UnixMilli()
+		}
+
+		export.Accounts = append(export.Accounts, Account{
+			Credentials: Credentials{
+				AccessToken:  t.AccessToken,
+				RefreshToken: t.RefreshToken,
+				ClientId:     t.ClientID,
+				ClientSecret: t.ClientSecret,
+				Region:       t.Region,
+				AuthMethod:   t.AuthMethod,
+				Provider:     t.Provider,
+				ExpiresAt:    expiresAt,
+				MachineId:    machineId,
+			},
+		})
+	}
+
+	return export, nil
+}
