@@ -90,6 +90,12 @@ class TokenDashboard {
                 if (e.target.files[0]) this.handleImport(e.target.files[0]);
             });
         }
+
+        // 导出
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this.handleExport());
+        }
     }
 
     animateRefresh(btn) {
@@ -702,6 +708,31 @@ class TokenDashboard {
             alert('导入失败: ' + e.message);
         }
         document.getElementById('importFile').value = '';
+    }
+
+    async handleExport() {
+        try {
+            const res = await fetch(`${this.apiBaseUrl}/export-accounts`);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                alert('导出失败: ' + (data.message || res.statusText));
+                return;
+            }
+            const blob = await res.blob();
+            const disposition = res.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="?([^";]+)"?/);
+            const filename = match ? match[1].trim() : 'kiro-accounts.json';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            alert('导出失败: ' + e.message);
+        }
     }
 
     // ============================================================
